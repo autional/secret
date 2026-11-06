@@ -373,15 +373,22 @@ export type ListAuditQuery = {
   keyword?: string;
   page?: number;
   page_size?: number;
+  /** 平台范围查询的数据租户（platform=true 时必填，可为 `_system`） */
+  tenantId?: string;
+  /** true = 走平台管理员跨租户端点（/platform/logs） */
+  platform?: boolean;
 };
 
 /**
- * 审计查询。租户由 JWT 决定（服务端强制），因此本页只能看到**认证租户**的审计；
- * 跨租户审计需要 audit-service 支持平台范围（波 2 待办）。
+ * 审计查询。
+ * - 普通模式：租户由 JWT 决定，只能看到认证租户；
+ * - 平台模式（platform=true）：显式传 tenantId 读取任意租户（服务端要求平台租户 + super_admin/admin）。
  */
 export async function listAudit(query: ListAuditQuery = {}): Promise<{ items: AuditLogItem[]; total: number }> {
-  const res = await request<ListEnvelope<AuditLogItem>>(AUDIT_BASE, '/logs', {
-    query: { module: 'secret', ...query },
+  const { platform, tenantId, ...rest } = query;
+  const path = platform ? '/platform/logs' : '/logs';
+  const res = await request<ListEnvelope<AuditLogItem>>(AUDIT_BASE, path, {
+    query: { module: 'secret', ...rest, tenant_id: platform ? tenantId : undefined },
   });
   return { items: res?.items ?? res?.data ?? [], total: res?.total ?? 0 };
 }

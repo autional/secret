@@ -11,6 +11,7 @@
 - **概览**：当前作用域的密钥总数 / 生效 / 过期 / 吊销统计；租户密钥策略（自动轮换天数、提前提醒、版本保留数）读写；加密密钥环当前 ID。
 - **密钥**：服务端分页列表（前缀 + 状态筛选）、详情抽屉（元数据 + 版本历史）、创建、改描述、轮换、吊销、删除、批量吊销 / 批量删除。
 - **审计**：调用 audit-service 读取 `module=secret` 的操作留痕（动作筛选、分页）。
+  平台管理员按当前数据作用域走 `/platform/logs` 跨租户查询；非平台账号回退本租户视角。
 - **数据作用域**：顶栏可切换 `X-Tenant-ID`（平台租户 / `_system` / 指定租户）与 `X-App-ID`（应用作用域）。
 - **门户切换**：目录来自平台 `tenant_applications`（不维护本地域名表）；目录不可用时降级为「平台控制台」。
 - **深链**：`#/secrets?key=<urlencoded key>` 直接打开详情（配置中心「去密钥中心」用这个）。
@@ -70,7 +71,8 @@ npm run preview
 | 批量 | `POST /batch-revoke` / `POST /batch-delete` body `{keys}` |
 | 策略 | `GET/PUT /policy` |
 | 加密密钥环 | `GET /encryption-keys` |
-| 审计 | `GET /bff/audit/api/v1/admin/audit/logs?module=secret` |
+| 审计（本租户） | `GET /bff/audit/api/v1/admin/audit/logs?module=secret` |
+| 审计（平台跨租户） | `GET /bff/audit/api/v1/admin/audit/platform/logs?tenant_id=<tenant>&module=secret` |
 
 所有请求带 `Authorization`、`X-Tenant-ID`、`X-App-ID`（空则省略）、`X-Namespace`。
 
@@ -82,7 +84,6 @@ npm run preview
 
 ## 已知限制
 
-- **跨租户审计不可用**：审计查询把租户钉在 JWT 租户；跨租户写操作的审计归属由服务端记录（待 audit-service 支持平台范围）。
 - **门户目录行**：`secret` 需在 `tenant_applications` 有 `type=portal/is_platform=true` 行，其它控制台的门户切换才会出现（波 3）。
 - **服务端版本**：`/scopes` 与 `secret:read` 读权限属 2026-11-06 波 2 改动，需部署 secret-service 后才生效；未部署时作用域选择器退化为手填。
 

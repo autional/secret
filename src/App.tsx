@@ -244,6 +244,8 @@ function Console() {
     if (roles.length === 0) return false;
     return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
   }, [session]);
+  /** 平台管理员：审计页按数据作用域跨租户查询（服务端 /platform/logs）。 */
+  const platformAudit = DATA_MODE === 'api' && session?.user.tenantId === PLATFORM_TENANT_ID;
 
   const loadSecrets = useCallback(async () => {
     if (DATA_MODE !== 'api') {
@@ -307,12 +309,24 @@ function Console() {
     if (DATA_MODE !== 'api') return;
     setAuditLoading(true);
     setAuditError('');
+    const base = {
+      action: auditAction === 'all' ? undefined : auditAction,
+      page: auditPage,
+      page_size: 20,
+    };
     try {
-      const res = await listAudit({
-        action: auditAction === 'all' ? undefined : auditAction,
-        page: auditPage,
-        page_size: 20,
-      });
+      let res;
+      if (session?.user.tenantId === PLATFORM_TENANT_ID) {
+        // 平台管理员：按当前数据作用域跨租户查询；端点不可用（403/旧版本）时回退租户视角。
+        try {
+          res = await listAudit({ ...base, platform: true, tenantId: scope.tenantId });
+        } catch (err) {
+          if ((err as { status?: number })?.status !== 403) throw err;
+          res = await listAudit(base);
+        }
+      } else {
+        res = await listAudit(base);
+      }
       setAuditRows(res.items);
       setAuditTotal(res.total);
     } catch (err) {
@@ -322,7 +336,7 @@ function Console() {
     } finally {
       setAuditLoading(false);
     }
-  }, [auditAction, auditPage]);
+  }, [auditAction, auditPage, session, scope.tenantId]);
 
   /* 登录态 */
   useEffect(() => {
@@ -841,6 +855,8 @@ function Console() {
             error={auditError}
             pageNo={auditPage}
             action={auditAction}
+            platform={platformAudit}
+            tenantId={scope.tenantId}
             onAction={(value) => {
               setAuditAction(value);
               setAuditPage(1);
@@ -1612,11 +1628,13 @@ function AuditPage(props: {
   error: string;
   pageNo: number;
   action: string;
+  platform: boolean;
+  tenantId: string;
   onAction: (value: string) => void;
   onPage: (page: number) => void;
   onReload: () => void;
 }) {
-  const { rows, total, loading, error, pageNo, action, onAction, onPage, onReload } = props;
+  const { rows, total, loading, error, pageNo, action, platform, tenantId, onAction, onPage, onReload } = props;
 
   return (
     <>
@@ -1634,8 +1652,12 @@ function AuditPage(props: {
         className="banner"
         type="info"
         showIcon
-        message="审计范围：认证租户"
-        description="服务端强制使用 JWT 租户查询；跨租户审计需要 audit-service 支持平台范围。跨租户写操作的归属租户以服务端记录为准。"
+        message={platform ? `审计范围：平台跨租户 · ${tenantId}` : '审计范围：认证租户'}
+        description={
+          platform
+            ? '平台管理员按当前数据作用域读取目标租户的审计事件（服务端 /platform/logs，要求 super_admin/admin）。'
+            : '服务端强制使用 JWT 租户查询；非平台账号只能看到本租户事件。'
+        }
       />
 
       {error ? (

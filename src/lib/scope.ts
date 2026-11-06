@@ -8,7 +8,7 @@
  *
  * 作用域存 sessionStorage（与本标签页的登录会话同生命周期），退出登录时清理。
  */
-import { APP_ID, PLATFORM_TENANT_ID, TENANT_ID } from './config';
+import { PLATFORM_TENANT_ID, TENANT_ID } from './config';
 import { currentSession } from './auth';
 
 export type Scope = {
@@ -39,12 +39,12 @@ function writeStorage(key: string, value: string): void {
   }
 }
 
-/** 登录会话里的租户/应用 → 构建期环境变量 → 平台租户常量。 */
+/** 登录会话里的租户 → 构建期环境变量 → 平台租户常量；应用作用域默认留空（不按应用过滤）。 */
 export function defaultScope(): Scope {
   const session = currentSession();
   return {
     tenantId: session?.user.tenantId || TENANT_ID || PLATFORM_TENANT_ID,
-    appId: session?.user.appId || APP_ID || '',
+    appId: '',
   };
 }
 

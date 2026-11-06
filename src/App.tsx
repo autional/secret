@@ -543,6 +543,16 @@ function Console() {
     message.info('已恢复为登录会话默认作用域');
   };
 
+  /** 一键切到系统租户（服务密钥所在）：租户 `_system`、应用留空。 */
+  const useSystemScope = () => {
+    const next = saveScope({ tenantId: SYSTEM_TENANT, appId: '' });
+    setScope(next);
+    setScopeDraft(next);
+    setPageNo(1);
+    setSelectedKeys([]);
+    message.success('已切换到 _system：可按应用作用域（服务名）查看服务密钥');
+  };
+
   /* -------------------------------- 写入 -------------------------------- */
 
   const openWrite = (state: WriteState, initial?: Record<string, unknown>) => {
@@ -788,6 +798,7 @@ function Console() {
           onChange={setScopeDraft}
           onApply={applyScope}
           onReset={resetScope}
+          onUseSystem={useSystemScope}
           loading={listLoading}
         />
 
@@ -800,6 +811,8 @@ function Console() {
             encryptionKey={encryptionKey}
             health={health}
             readOnly={readOnly}
+            scopeTenantId={scope.tenantId}
+            onUseSystemScope={useSystemScope}
             onSavePolicy={savePolicy}
             onOpenSecrets={() => go('secrets')}
           />
@@ -839,6 +852,8 @@ function Console() {
             onView={openDetail}
             onSelected={setSelectedKeys}
             readOnly={readOnly}
+            scopeTenantId={scope.tenantId}
+            onUseSystemScope={useSystemScope}
             onCreate={() => openWrite({ mode: 'create' })}
             onEdit={(row) => openWrite({ mode: 'edit', key: row.key }, { description: row.description ?? '' })}
             onRotate={(row) => openWrite({ mode: 'rotate', key: row.key }, { key: row.key })}
@@ -952,8 +967,9 @@ function ScopeBar(props: {
   onChange: (next: Scope) => void;
   onApply: () => void;
   onReset: () => void;
+  onUseSystem: () => void;
 }) {
-  const { draft, current, appOptions, loading, onChange, onApply, onReset } = props;
+  const { draft, current, appOptions, loading, onChange, onApply, onReset, onUseSystem } = props;
   const preset = [PLATFORM_TENANT_ID, SYSTEM_TENANT].includes(draft.tenantId) ? draft.tenantId : 'custom';
   const dirty = draft.tenantId !== current.tenantId || draft.appId !== current.appId;
 
@@ -966,10 +982,11 @@ function ScopeBar(props: {
           value={preset}
           onChange={(value) => {
             if (value === 'custom') {
-              onChange({ ...draft, tenantId: preset === 'custom' ? draft.tenantId : '' });
+              onChange({ tenantId: '', appId: '' });
               return;
             }
-            onChange({ ...draft, tenantId: value });
+            // 切租户时清空应用作用域：避免拿着上一个租户的 app 看到空列表。
+            onChange({ tenantId: value, appId: '' });
           }}
           options={[
             { value: PLATFORM_TENANT_ID, label: '平台租户（platform）' },
@@ -1004,6 +1021,9 @@ function ScopeBar(props: {
         </Button>
         <Button size="small" onClick={onReset}>
           恢复默认
+        </Button>
+        <Button size="small" onClick={onUseSystem}>
+          服务密钥（_system）
         </Button>
         <span className="hint">
           服务密钥：租户 <code className="mono">_system</code> + 应用 <code className="mono">&lt;服务名&gt;</code>
@@ -1147,10 +1167,12 @@ function Overview(props: {
   encryptionKey: string;
   health: HealthState;
   readOnly: boolean;
+  scopeTenantId: string;
+  onUseSystemScope: () => void;
   onSavePolicy: (input: { auto_rotate_days?: number; notification_days_before?: number; max_versions?: number }) => void;
   onOpenSecrets: () => void;
 }) {
-  const { stats, total, policy, policyError, encryptionKey, health, readOnly, onSavePolicy, onOpenSecrets } = props;
+  const { stats, total, policy, policyError, encryptionKey, health, readOnly, scopeTenantId, onUseSystemScope, onSavePolicy, onOpenSecrets } = props;
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
 
@@ -1199,6 +1221,26 @@ function Overview(props: {
           </Card>
         </Col>
       </Row>
+
+      {total === 0 && scopeTenantId !== SYSTEM_TENANT ? (
+        <Alert
+          className="banner top-gap"
+          type="info"
+          showIcon
+          message="当前作用域没有密钥"
+          description={
+            <>
+              平台租户通常没有密钥；服务密钥在 <code className="mono">_system</code> 租户，
+              按应用作用域（服务名，如 <code className="mono">identity-service</code>）分组。
+            </>
+          }
+          action={
+            <Button size="small" type="primary" onClick={onUseSystemScope}>
+              切换到 _system
+            </Button>
+          }
+        />
+      ) : null}
 
       <Row gutter={12} className="top-gap">
         <Col span={14}>
@@ -1288,6 +1330,8 @@ function SecretsPage(props: {
   pageSize: number;
   selectedKeys: string[];
   readOnly: boolean;
+  scopeTenantId: string;
+  onUseSystemScope: () => void;
   onPrefix: (value: string) => void;
   onSearch: () => void;
   onStatus: (value: string) => void;
@@ -1314,6 +1358,8 @@ function SecretsPage(props: {
     pageSize,
     selectedKeys,
     readOnly,
+    scopeTenantId,
+    onUseSystemScope,
     onPrefix,
     onSearch,
     onStatus,
@@ -1471,7 +1517,23 @@ function SecretsPage(props: {
             onChange: (next, size) => onPage(next, size),
           }}
           scroll={{ x: 1080 }}
-          locale={{ emptyText: <Empty description="当前作用域下没有密钥" /> }}
+          locale={{
+            emptyText: (
+              <Empty
+                description={
+                  total === 0 && scopeTenantId !== SYSTEM_TENANT
+                    ? '当前作用域没有密钥；服务密钥在 _system 租户'
+                    : '没有匹配的密钥'
+                }
+              >
+                {total === 0 && scopeTenantId !== SYSTEM_TENANT ? (
+                  <Button size="small" type="primary" onClick={onUseSystemScope}>
+                    切换到 _system
+                  </Button>
+                ) : null}
+              </Empty>
+            ),
+          }}
         />
       </Card>
     </>

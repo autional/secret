@@ -82,6 +82,17 @@ npm run preview
 - 服务密钥：租户 = `_system`，应用 = 服务名（如 `secret-service`）。服务端按 `tenant_id + app_id` **精确**过滤。
 - 指定租户：租户填目标 ULID；跨租户要求认证租户为 platform 且具备 `super_admin` / `admin`，否则 403。
 
+### 看不到数据？
+
+平台租户（登录会话默认租户）通常**没有**密钥，服务密钥都在 `_system`：
+
+1. 点作用域栏的「服务密钥（_system）」，或把租户切到「系统租户（_system）」；
+2. 应用作用域留空 → 看到该租户下 `app_id=''` 的行；
+3. 再选具体服务名（如 `identity-service`）→ 看到该服务的密钥。
+
+概览的「密钥总数」来自服务端 `total`；横幅显示「API 已连通」而总数为 0，说明当前作用域确实为空，
+不是未接 API。
+
 ## 已知限制
 
 - **门户目录行**：`secret` 需在 `tenant_applications` 有 `type=portal/is_platform=true` 行，其它控制台的门户切换才会出现（波 3）。

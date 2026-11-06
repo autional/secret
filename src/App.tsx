@@ -321,7 +321,9 @@ function Console() {
         try {
           res = await listAudit({ ...base, platform: true, tenantId: scope.tenantId });
         } catch (err) {
-          if ((err as { status?: number })?.status !== 403) throw err;
+          const status = (err as { status?: number })?.status;
+          // 403：角色不足；404：audit-service 旧版本尚无该端点 → 回退租户视角。
+          if (status !== 403 && status !== 404) throw err;
           res = await listAudit(base);
         }
       } else {

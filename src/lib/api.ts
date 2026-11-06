@@ -39,8 +39,13 @@ type ProblemBody = { title?: string; detail?: string; code?: string; status?: nu
 export type QueryValue = string | number | boolean | null | undefined;
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
+/** 单次请求的数据作用域覆盖（平台盘点视图按行/按筛选传）。 */
+export type ScopeOverride = { tenantId: string; appId?: string };
+
 export type RequestOptions = {
   method?: Method;
+  /** 覆盖默认作用域（X-Tenant-ID / X-App-ID）；缺省取 lib/scope 的当前值。 */
+  scope?: ScopeOverride;
   query?: Record<string, QueryValue>;
   /** JSON 请求体（POST/PUT 用） */
   body?: unknown;
@@ -51,9 +56,9 @@ export type RequestOptions = {
   timeoutMs?: number;
 };
 
-function scopeHeaders(): Record<string, string> {
+function scopeHeaders(override?: ScopeOverride): Record<string, string> {
   const session = currentSession();
-  const scope = resolveScope();
+  const scope = override ?? resolveScope();
   const headers: Record<string, string> = {};
   if (session?.accessToken) headers.Authorization = `Bearer ${session.accessToken}`;
   // 后端要求 X-Tenant-ID 必填；作用域由 UI 选择，空值交给后端判 401/400（不伪造）。
@@ -110,7 +115,7 @@ export async function request<T>(base: string, path: string, options: RequestOpt
 
 async function send(base: string, path: string, options: RequestOptions): Promise<Response> {
   const { method = 'GET', query, body, changeReason, retried = false, timeoutMs = 20_000 } = options;
-  const headers: Record<string, string> = { Accept: 'application/json', ...scopeHeaders() };
+  const headers: Record<string, string> = { Accept: 'application/json', ...scopeHeaders(options.scope) };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (changeReason) headers['X-Change-Reason'] = changeReason;
 
@@ -157,6 +162,7 @@ async function send(base: string, path: string, options: RequestOptions): Promis
 /** 管理面密钥条目（= service-secret 的 dto.SecretResponse，**不含密钥值**）。 */
 export type SecretItem = {
   id?: string;
+  tenant_id?: string;
   app_id?: string;
   key: string;
   description?: string;
@@ -220,9 +226,36 @@ export async function listSecrets(query: ListSecretsQuery = {}): Promise<{ items
   return { items: res?.items ?? res?.data ?? [], total: res?.total ?? 0 };
 }
 
+/* --------------------------- 平台盘点（跨租户/跨应用） --------------------------- */
+
+export type SecretScope = { tenant_id: string; app_id: string; secret_count: number };
+
+/** 全库 tenant×app 作用域（平台过滤下拉 + 盘点视图）。 */
+export async function listAllScopes(): Promise<SecretScope[]> {
+  const res = await request<{ data?: SecretScope[] }>(API_BASE, '/all/scopes');
+  return Array.isArray(res?.data) ? res.data : [];
+}
+
+export type ListAllSecretsQuery = {
+  tenant_id?: string;
+  app_id?: string;
+  prefix?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+};
+
+/** 平台盘点列表：tenant_id / app_id 为空表示不过滤（不依赖 X-Tenant-ID）。 */
+export async function listAllSecrets(
+  query: ListAllSecretsQuery = {},
+): Promise<{ items: SecretItem[]; total: number }> {
+  const res = await request<ListEnvelope<SecretItem>>(API_BASE, '/all', { query: { ...query } });
+  return { items: res?.items ?? res?.data ?? [], total: res?.total ?? 0 };
+}
+
 /** 详情（只读）：元数据 + 版本列表。 */
-export async function getSecretDetail(key: string): Promise<SecretDetail> {
-  const res = await request<{ data?: SecretDetail }>(API_BASE, '/detail', { query: { key } });
+export async function getSecretDetail(key: string, scope?: ScopeOverride): Promise<SecretDetail> {
+  const res = await request<{ data?: SecretDetail }>(API_BASE, '/detail', { query: { key }, scope });
   return unwrap(res, '详情');
 }
 
@@ -245,13 +278,14 @@ export type CreateSecretInput = {
   reason?: string;
 };
 
-export async function createSecret(input: CreateSecretInput): Promise<SecretItem> {
+export async function createSecret(input: CreateSecretInput, scope?: ScopeOverride): Promise<SecretItem> {
   const { reason, ...rest } = input;
   const metadata = reason?.trim() ? { change_reason: reason.trim() } : undefined;
   const res = await request<{ data?: SecretItem }>(API_BASE, '', {
     method: 'POST',
     body: { ...rest, metadata },
     changeReason: reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '创建');
 }
@@ -259,64 +293,68 @@ export async function createSecret(input: CreateSecretInput): Promise<SecretItem
 export type UpdateSecretInput = { description?: string; reason?: string };
 
 /** 只更新元信息（描述 / metadata），不改变密钥值。 */
-export async function updateSecretMeta(key: string, input: UpdateSecretInput): Promise<SecretItem> {
+export async function updateSecretMeta(key: string, input: UpdateSecretInput, scope?: ScopeOverride): Promise<SecretItem> {
   const metadata = input.reason?.trim() ? { change_reason: input.reason.trim() } : undefined;
   const res = await request<{ data?: SecretItem }>(API_BASE, '/update', {
     method: 'POST',
     query: { key },
     body: { description: input.description, metadata },
     changeReason: input.reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '更新');
 }
 
 /** 轮换：写入新值并推进版本。 */
-export async function rotateSecret(key: string, value: string, reason?: string): Promise<SecretItem> {
+export async function rotateSecret(key: string, value: string, reason?: string, scope?: ScopeOverride): Promise<SecretItem> {
   const res = await request<{ data?: SecretItem }>(API_BASE, '/rotate', {
     method: 'POST',
     query: { key },
     body: { value },
     changeReason: reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '轮换');
 }
 
 /** 吊销：状态置 revoked，版本保留。 */
-export async function revokeSecret(key: string, reason?: string): Promise<void> {
-  await request(API_BASE, '/revoke', { method: 'POST', query: { key }, changeReason: reason?.trim() || undefined });
+export async function revokeSecret(key: string, reason?: string, scope?: ScopeOverride): Promise<void> {
+  await request(API_BASE, '/revoke', { method: 'POST', query: { key }, changeReason: reason?.trim() || undefined, scope });
 }
 
 /** 删除（软删）。密钥路径可能含 `/`，逐段编码避免被当成新路径。 */
-export async function deleteSecret(key: string, reason?: string): Promise<void> {
+export async function deleteSecret(key: string, reason?: string, scope?: ScopeOverride): Promise<void> {
   const encoded = key
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-  await request(API_BASE, `/item/key/${encoded}`, { method: 'DELETE', changeReason: reason?.trim() || undefined });
+  await request(API_BASE, `/item/key/${encoded}`, { method: 'DELETE', changeReason: reason?.trim() || undefined, scope });
 }
 
-export async function batchRevokeSecrets(keys: string[], reason?: string): Promise<BatchResult> {
+export async function batchRevokeSecrets(keys: string[], reason?: string, scope?: ScopeOverride): Promise<BatchResult> {
   const res = await request<{ data?: BatchResult }>(API_BASE, '/batch-revoke', {
     method: 'POST',
     body: { keys },
     changeReason: reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '批量吊销');
 }
 
-export async function batchDeleteSecrets(keys: string[], reason?: string): Promise<BatchResult> {
+export async function batchDeleteSecrets(keys: string[], reason?: string, scope?: ScopeOverride): Promise<BatchResult> {
   const res = await request<{ data?: BatchResult }>(API_BASE, '/batch-delete', {
     method: 'POST',
     body: { keys },
     changeReason: reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '批量删除');
 }
 
 /* -------------------------------- 策略 / 密钥环 -------------------------------- */
 
-export async function getSecretPolicy(): Promise<SecretPolicy> {
-  const res = await request<{ data?: SecretPolicy }>(API_BASE, '/policy');
+export async function getSecretPolicy(scope?: ScopeOverride): Promise<SecretPolicy> {
+  const res = await request<{ data?: SecretPolicy }>(API_BASE, '/policy', { scope });
   return unwrap(res, '策略');
 }
 
@@ -327,11 +365,12 @@ export type SecretPolicyInput = {
   require_rotation_for_fallback_keys?: boolean;
 };
 
-export async function upsertSecretPolicy(input: SecretPolicyInput, reason?: string): Promise<SecretPolicy> {
+export async function upsertSecretPolicy(input: SecretPolicyInput, reason?: string, scope?: ScopeOverride): Promise<SecretPolicy> {
   const res = await request<{ data?: SecretPolicy }>(API_BASE, '/policy', {
     method: 'PUT',
     body: input,
     changeReason: reason?.trim() || undefined,
+    scope,
   });
   return unwrap(res, '策略');
 }
@@ -402,8 +441,8 @@ export async function checkApi(): Promise<ApiHealth> {
     return { ok: false, mode: 'api', message: '未登录：未检测 API' };
   }
   try {
-    const { total } = await listSecrets({ page: 1, page_size: 1 });
-    return { ok: true, mode: 'api', message: `已连通 ${API_BASE}（当前作用域共 ${total} 条）` };
+    const { total } = await listAllSecrets({ page: 1, page_size: 1 });
+    return { ok: true, mode: 'api', message: `已连通 ${API_BASE}（全平台共 ${total} 条）` };
   } catch (err) {
     return { ok: false, mode: 'api', message: `${API_BASE} 不可达：${err instanceof Error ? err.message : String(err)}` };
   }

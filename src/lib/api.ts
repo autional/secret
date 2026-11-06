@@ -12,7 +12,7 @@
  * 响应信封：`{ code, message, items, total, pagination }` / `{ code, message, data }`。
  */
 import { currentSession, refreshSession } from './auth';
-import { API_BASE, APP_ID, AUTH_MODE, DATA_MODE, TENANT_ID } from './config';
+import { API_BASE, APP_ID, AUTH_MODE, DATA_MODE, TENANT_ID, API_NAMESPACE } from './config';
 
 /** 管理面错误（统一携带 HTTP 状态与业务错误码，便于 UI 分流 401/403/503）。 */
 export class ApiError extends Error {
@@ -53,6 +53,8 @@ function scopeHeaders(): Record<string, string> {
   // 后端要求该头必填；值为空时交给后端判 401（不伪造）。
   if (tenant) headers['X-Tenant-ID'] = tenant;
   if (app) headers['X-App-ID'] = app;
+  // service-secret 的 NamespaceMiddleware 必填（fail-closed 400），值来自 SECRET_NAMESPACES。
+  headers['X-Namespace'] = API_NAMESPACE;
   return headers;
 }
 

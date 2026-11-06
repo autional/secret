@@ -34,6 +34,9 @@ export const AUTH_MODE: AuthMode = str('VITE_AUTH_MODE', 'mock').toLowerCase() =
  */
 export const API_BASE = str('VITE_API_BASE', '/bff/secret/api/v1/admin/secrets').replace(/\/+$/, '');
 
+/** 密钥服务要求 X-Namespace（必须 ∈ 实例 SECRET_NAMESPACES，缺省 dev）。 */
+export const API_NAMESPACE = str('VITE_API_NAMESPACE', 'dev');
+
 /** 租户/应用作用域：JWT 已带租户时以令牌为准（见 lib/api.ts），此处是兜底。 */
 export const TENANT_ID = str('VITE_TENANT_ID');
 export const APP_ID = str('VITE_APP_ID');

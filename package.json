@@ -5,9 +5,9 @@
 	"type": "module",
 	"description": "密钥中心控制台（密钥列表 / 审计）",
 	"scripts": {
-		"dev": "vite --port 13121",
+		"dev": "vite --port 13122",
 		"build": "tsc --noEmit && vite build",
-		"preview": "vite preview --port 13121",
+		"preview": "vite preview --port 13122",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},

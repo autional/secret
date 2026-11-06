@@ -30,7 +30,7 @@
 
 ```bash
 npm ci
-npm run dev      # http://localhost:13121
+npm run dev      # http://localhost:13122
 npm run build    # tsc --noEmit + vite build → dist/
 npm run preview
 ```

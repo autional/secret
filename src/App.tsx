@@ -9,8 +9,11 @@ import {
   Drawer,
   Dropdown,
   Empty,
+  Form,
   Input,
+  InputNumber,
   Layout,
+  Modal,
   Row,
   Select,
   Space,
@@ -18,14 +21,52 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
-import type { MenuProps, TableProps } from 'antd';
-import { API_BASE, AUTH_MODE, DATA_MODE, isCallbackPath, OIDC, PLATFORM_URL, REQUIRE_AUTH, RUNTIME_MODE_LABEL } from './lib/config';
+import type { FormInstance, MenuProps, TableProps } from 'antd';
+import {
+  API_BASE,
+  API_NAMESPACE,
+  AUTH_MODE,
+  DATA_MODE,
+  isCallbackPath,
+  OIDC,
+  PLATFORM_TENANT_ID,
+  REQUIRE_AUTH,
+  RUNTIME_MODE_LABEL,
+} from './lib/config';
 import { completeLogin, restoreSession, signOut, startLogin } from './lib/auth';
 import type { Session } from './lib/auth';
-import { UNAUTHORIZED_EVENT, checkApi, getSecretDetail, listSecrets } from './lib/api';
-import type { ApiHealth, SecretDetail, SecretItem, SecretVersion } from './lib/api';
+import {
+  UNAUTHORIZED_EVENT,
+  batchDeleteSecrets,
+  batchRevokeSecrets,
+  checkApi,
+  createSecret,
+  deleteSecret,
+  getEncryptionKeys,
+  getSecretDetail,
+  getSecretPolicy,
+  listAudit,
+  listSecrets,
+  revokeSecret,
+  rotateSecret,
+  updateSecretMeta,
+  upsertSecretPolicy,
+} from './lib/api';
+import type { ApiHealth, AuditLogItem, SecretDetail, SecretItem, SecretPolicy, SecretVersion } from './lib/api';
+import { clearScope, defaultScope, isCrossTenant, resolveScope, saveScope, SYSTEM_TENANT } from './lib/scope';
+import type { Scope } from './lib/scope';
+import {
+  CURRENT_PORTAL_CODE,
+  buildPortalUrl,
+  fallbackPlatformUrl,
+  fetchPortals,
+  filterPortals,
+  rootDomainOf,
+} from './lib/portal';
+import type { PortalApplication } from './lib/portal';
 import './styles.css';
 
 const { Text } = Typography;
@@ -34,7 +75,11 @@ type Page = 'overview' | 'secrets' | 'audit';
 
 type HealthState = { state: 'checking' | 'ok' | 'error' | 'mock'; message: string };
 
-/** 占位密钥（仅元数据；不含任何真实密钥值）。api 模式会尝试用只读接口替换。 */
+type WriteMode = 'create' | 'edit' | 'rotate' | 'revoke' | 'delete' | 'batch-revoke' | 'batch-delete';
+
+type WriteState = { mode: WriteMode; key?: string; keys?: string[] };
+
+/** 占位密钥（仅元数据；不含任何真实密钥值）。 */
 const MOCK_SECRETS: SecretItem[] = [
   {
     id: 'sec_01JDEMO000000000000000001',
@@ -61,41 +106,11 @@ const MOCK_SECRETS: SecretItem[] = [
     key: 'oauth/client/default',
     description: '默认 OAuth 客户端密钥',
     version: 2,
-    status: 'active',
+    status: 'revoked',
     created_at: '2026-03-05T06:15:00Z',
     updated_at: '2026-08-01T02:05:00Z',
-    expires_at: '2027-08-01T02:05:00Z',
-  },
-  {
-    id: 'sec_01JDEMO000000000000000004',
-    key: 'sms/provider/sign',
-    description: '短信服务商签名密钥',
-    version: 1,
-    status: 'expired',
-    created_at: '2025-06-11T09:00:00Z',
-    updated_at: '2025-06-11T09:00:00Z',
-    expires_at: '2026-06-11T09:00:00Z',
-  },
-  {
-    id: 'sec_01JDEMO000000000000000005',
-    key: 'storage/oss/access',
-    description: '对象存储访问凭据（历史版本）',
-    version: 4,
-    status: 'revoked',
-    created_at: '2025-02-19T07:30:00Z',
-    updated_at: '2026-04-22T10:10:00Z',
     expires_at: null,
   },
-];
-
-/** 占位审计事件。 */
-type AuditRow = { id: string; time: string; actor: string; action: string; target: string; result: string };
-
-const MOCK_AUDIT: AuditRow[] = [
-  { id: 'a1', time: '2026-11-06 10:12:31', actor: '密钥中心管理员', action: 'admin_list', target: '*', result: '成功' },
-  { id: 'a2', time: '2026-11-05 18:44:02', actor: '密钥中心管理员', action: 'admin_detail', target: 'jwt/signing/primary', result: '成功' },
-  { id: 'a3', time: '2026-11-04 09:03:17', actor: 'system', action: 'rotate', target: 'db/postgres/app', result: '成功' },
-  { id: 'a4', time: '2026-11-02 15:28:55', actor: '安全审计员', action: 'admin_list', target: '*', result: '成功' },
 ];
 
 const STATUS_META: Record<string, { color: string; label: string }> = {
@@ -110,25 +125,33 @@ const PAGE_TITLE: Record<Page, string> = {
   audit: '审计',
 };
 
-function parseHash(): Page {
-  const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].replace(/\/+$/, '');
-  if (raw === 'secrets') return 'secrets';
-  if (raw === 'audit') return 'audit';
-  return 'overview';
+function parseHash(): { page: Page; query: URLSearchParams } {
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  const [path, search] = raw.split('?');
+  const clean = path.replace(/\/+$/, '');
+  const page: Page = clean === 'secrets' ? 'secrets' : clean === 'audit' ? 'audit' : 'overview';
+  return { page, query: new URLSearchParams(search ?? '') };
 }
 
-function hashOf(page: Page): string {
-  return page === 'overview' ? '#/' : `#/${page}`;
+function hashOf(page: Page, query?: Record<string, string | undefined>): string {
+  const base = page === 'overview' ? '#/' : `#/${page}`;
+  if (!query) return base;
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value) params.set(key, value);
+  }
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
 }
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function fmtTime(value?: string | null): string {
+function fmtTime(value?: string | number | null): string {
   if (!value) return '—';
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
@@ -145,7 +168,6 @@ function bootstrapAuth(): Promise<BootResult> {
   if (authBoot) return authBoot;
   authBoot = (async (): Promise<BootResult> => {
     try {
-      // OIDC 回调页：用 code + PKCE 换票，然后清掉 URL 上的 code/state（避免刷新重放授权码）。
       if (AUTH_MODE === 'oidc' && isCallbackPath()) {
         const session = await completeLogin();
         window.history.replaceState(null, '', `/${window.location.hash || ''}`);
@@ -159,7 +181,7 @@ function bootstrapAuth(): Promise<BootResult> {
   return authBoot;
 }
 
-/** 顶层只负责挂 antd 的 App 上下文，业务状态在 Console（这样 Console 内可用 useApp 的 message）。 */
+/** 顶层只负责挂 antd 的 App 上下文，业务状态在 Console。 */
 export default function Root() {
   return (
     <AntdApp>
@@ -173,25 +195,51 @@ function Console() {
   const [authReady, setAuthReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [authError, setAuthError] = useState('');
-  const [page, setPage] = useState<Page>(() => parseHash());
+  const [page, setPage] = useState<Page>(() => parseHash().page);
   const [health, setHealth] = useState<HealthState>({ state: 'checking', message: '' });
+  const [stats, setStats] = useState({ active: 0, revoked: 0, expired: 0 });
 
-  const [secrets, setSecrets] = useState<SecretItem[]>(MOCK_SECRETS);
+  const [scope, setScope] = useState<Scope>(() => resolveScope());
+  const [scopeDraft, setScopeDraft] = useState<Scope>(() => resolveScope());
+
+  const [secrets, setSecrets] = useState<SecretItem[]>(DATA_MODE === 'api' ? [] : MOCK_SECRETS);
+  const [total, setTotal] = useState(DATA_MODE === 'api' ? 0 : MOCK_SECRETS.length);
   const [listLoading, setListLoading] = useState(DATA_MODE === 'api');
   const [listError, setListError] = useState('');
-  const [query, setQuery] = useState('');
+  const [prefixInput, setPrefixInput] = useState('');
+  const [prefix, setPrefix] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [pageNo, setPageNo] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
 
   const [viewing, setViewing] = useState<SecretItem | null>(null);
   const [detail, setDetail] = useState<SecretDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
 
+  const [write, setWrite] = useState<WriteState | null>(null);
+  const [writeLoading, setWriteLoading] = useState(false);
+  const [form] = Form.useForm();
+
+  const [policy, setPolicy] = useState<SecretPolicy | null>(null);
+  const [policyError, setPolicyError] = useState('');
+  const [encryptionKey, setEncryptionKey] = useState('');
+
+  const [auditRows, setAuditRows] = useState<AuditLogItem[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditAction, setAuditAction] = useState('all');
+
   const needsLogin = !session && (REQUIRE_AUTH || DATA_MODE === 'api');
+  const crossTenant = isCrossTenant(scope);
 
   const loadSecrets = useCallback(async () => {
     if (DATA_MODE !== 'api') {
       setSecrets(MOCK_SECRETS);
+      setTotal(MOCK_SECRETS.length);
       setListError('');
       setListLoading(false);
       return;
@@ -199,17 +247,75 @@ function Console() {
     setListLoading(true);
     setListError('');
     try {
-      const rows = await listSecrets({ page: 1, page_size: 50 });
-      setSecrets(rows);
+      const res = await listSecrets({
+        prefix: prefix.trim() || undefined,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        page: pageNo,
+        page_size: pageSize,
+      });
+      setSecrets(res.items);
+      setTotal(res.total);
+      setSelectedKeys([]);
     } catch (err) {
       setListError(errorText(err));
-      setSecrets(MOCK_SECRETS);
+      setSecrets([]);
+      setTotal(0);
     } finally {
       setListLoading(false);
     }
+  }, [prefix, statusFilter, pageNo, pageSize]);
+
+  const loadStats = useCallback(async () => {
+    if (DATA_MODE !== 'api') return;
+    try {
+      const [active, revoked, expired] = await Promise.all([
+        listSecrets({ status: 'active', page: 1, page_size: 1 }),
+        listSecrets({ status: 'revoked', page: 1, page_size: 1 }),
+        listSecrets({ status: 'expired', page: 1, page_size: 1 }),
+      ]);
+      setStats({ active: active.total, revoked: revoked.total, expired: expired.total });
+    } catch {
+      /* 统计失败不打断主流程 */
+    }
   }, []);
 
-  /* 登录态：处理 OIDC 回调（换票）或恢复已有会话。 */
+  const loadPolicy = useCallback(async () => {
+    if (DATA_MODE !== 'api') return;
+    setPolicyError('');
+    try {
+      setPolicy(await getSecretPolicy());
+    } catch (err) {
+      setPolicyError(errorText(err));
+    }
+    try {
+      setEncryptionKey((await getEncryptionKeys()).current);
+    } catch {
+      /* 密钥环信息缺失不影响主流程 */
+    }
+  }, []);
+
+  const loadAudit = useCallback(async () => {
+    if (DATA_MODE !== 'api') return;
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const res = await listAudit({
+        action: auditAction === 'all' ? undefined : auditAction,
+        page: auditPage,
+        page_size: 20,
+      });
+      setAuditRows(res.items);
+      setAuditTotal(res.total);
+    } catch (err) {
+      setAuditError(errorText(err));
+      setAuditRows([]);
+      setAuditTotal(0);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditAction, auditPage]);
+
+  /* 登录态 */
   useEffect(() => {
     let alive = true;
     void bootstrapAuth().then((result) => {
@@ -217,29 +323,49 @@ function Console() {
       setAuthError(result.error);
       setSession(result.session);
       setAuthReady(true);
+      if (result.session) {
+        const next = defaultScope();
+        setScope(next);
+        setScopeDraft(next);
+      }
     });
     return () => {
       alive = false;
     };
   }, []);
 
-  /* 令牌失效（401）→ 清会话、回登录态。 */
+  /* 401 → 清会话 */
   useEffect(() => {
     const onUnauthorized = () => {
-      void signOut().then(() => setSession(null));
+      void signOut().then(() => {
+        clearScope();
+        setSession(null);
+        setSecrets([]);
+        setTotal(0);
+      });
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
-  /* 路由：hash 变化（含浏览器前进/后退）。 */
+  /* 路由（含深链 ?key=） */
   useEffect(() => {
-    const onHash = () => setPage(parseHash());
+    const onHash = () => {
+      const next = parseHash();
+      setPage(next.page);
+      const key = next.query.get('key');
+      if (key && next.page === 'secrets') setViewing({ key });
+    };
     window.addEventListener('hashchange', onHash);
+    const boot = parseHash();
+    if (boot.page === 'secrets') {
+      const key = boot.query.get('key');
+      if (key) setViewing({ key });
+    }
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  /* API 连通性探测：登录后执行一次。mock 模式不发起网络请求。 */
+  /* 连通性 */
   useEffect(() => {
     if (!authReady || !session) {
       setHealth({ state: 'mock', message: '未登录：未检测 API' });
@@ -255,9 +381,9 @@ function Console() {
     return () => {
       alive = false;
     };
-  }, [authReady, session]);
+  }, [authReady, session, scope]);
 
-  /* 列表：api 模式需要已登录；mock 模式直接使用占位数据。 */
+  /* 列表 / 统计 / 策略 */
   useEffect(() => {
     if (!authReady) return;
     if (DATA_MODE === 'api' && !session) {
@@ -266,6 +392,44 @@ function Console() {
     }
     void loadSecrets();
   }, [authReady, session, loadSecrets]);
+
+  useEffect(() => {
+    if (!authReady || !session) return;
+    void loadStats();
+    void loadPolicy();
+  }, [authReady, session, scope, loadStats, loadPolicy]);
+
+  /* 审计：进入页面或筛选变化时加载 */
+  useEffect(() => {
+    if (page !== 'audit' || !authReady || !session) return;
+    void loadAudit();
+  }, [page, authReady, session, scope, loadAudit]);
+
+  /* 详情：登录后补拉 */
+  useEffect(() => {
+    if (!viewing) {
+      setDetail(null);
+      setDetailError('');
+      return;
+    }
+    if (DATA_MODE !== 'api' || !session) return;
+    let alive = true;
+    setDetailLoading(true);
+    setDetailError('');
+    void getSecretDetail(viewing.key)
+      .then((data) => {
+        if (alive) setDetail(data);
+      })
+      .catch((err) => {
+        if (alive) setDetailError(errorText(err));
+      })
+      .finally(() => {
+        if (alive) setDetailLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [viewing, session]);
 
   const go = (next: Page) => {
     window.location.hash = hashOf(next);
@@ -285,23 +449,154 @@ function Console() {
 
   const logout = async () => {
     await signOut();
+    clearScope();
     setSession(null);
     setViewing(null);
+    setSecrets([]);
+    setTotal(0);
     message.success('已退出登录');
   };
 
-  const openDetail = async (row: SecretItem) => {
+  const openDetail = (row: SecretItem) => {
     setViewing(row);
-    setDetail(null);
-    setDetailError('');
-    if (DATA_MODE !== 'api') return;
-    setDetailLoading(true);
+    if (page !== 'secrets') {
+      window.location.hash = hashOf('secrets', { key: row.key });
+      setPage('secrets');
+    } else {
+      window.history.replaceState(null, '', `${window.location.pathname}${hashOf('secrets', { key: row.key })}`);
+    }
+  };
+
+  const closeDetail = () => {
+    setViewing(null);
+    if (page === 'secrets') {
+      window.history.replaceState(null, '', `${window.location.pathname}${hashOf('secrets')}`);
+    }
+  };
+
+  const applyScope = () => {
+    const next = saveScope(scopeDraft);
+    setScope(next);
+    setScopeDraft(next);
+    setPageNo(1);
+    setSelectedKeys([]);
+    setViewing(null);
+    message.success(`数据作用域：${next.tenantId}${next.appId ? ` / ${next.appId}` : ' / （app 为空）'}`);
+  };
+
+  const resetScope = () => {
+    const next = defaultScope();
+    const saved = saveScope(next);
+    setScope(saved);
+    setScopeDraft(saved);
+    setPageNo(1);
+    message.info('已恢复为登录会话默认作用域');
+  };
+
+  /* -------------------------------- 写入 -------------------------------- */
+
+  const openWrite = (state: WriteState, initial?: Record<string, unknown>) => {
+    form.resetFields();
+    form.setFieldsValue(initial ?? {});
+    setWrite(state);
+  };
+
+  const submitWrite = async () => {
+    if (!write) return;
+    if (DATA_MODE !== 'api') {
+      message.info('演示模式不支持写入：设置 VITE_DATA_MODE=api 并登录后可用');
+      return;
+    }
+    let values: Record<string, unknown>;
     try {
-      setDetail(await getSecretDetail(row.key));
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
+    const reason = String(values.reason ?? '').trim();
+    setWriteLoading(true);
+    try {
+      switch (write.mode) {
+        case 'create': {
+          const rawExpiry = String(values.expires_at ?? '').trim();
+          // 只填日期时补成 UTC 零点，避免后端 RFC3339 解析 400。
+          const expiresAt = /^\d{4}-\d{2}-\d{2}$/.test(rawExpiry) ? `${rawExpiry}T00:00:00Z` : rawExpiry;
+          await createSecret({
+            key: String(values.key ?? '').trim(),
+            value: String(values.value ?? ''),
+            description: String(values.description ?? '').trim() || undefined,
+            expires_at: expiresAt || undefined,
+            reason,
+          });
+          message.success('已创建密钥');
+          break;
+        }
+        case 'edit': {
+          if (!write.key) return;
+          const description = String(values.description ?? '').trim();
+          if (!description && !reason) {
+            message.error('描述与变更原因至少填一项');
+            setWriteLoading(false);
+            return;
+          }
+          await updateSecretMeta(write.key, { description, reason });
+          message.success('已更新元信息');
+          break;
+        }
+        case 'rotate': {
+          if (!write.key) return;
+          await rotateSecret(write.key, String(values.value ?? ''), reason);
+          message.success(`已轮换 ${write.key}`);
+          break;
+        }
+        case 'revoke': {
+          if (!write.key) return;
+          await revokeSecret(write.key, reason);
+          message.success(`已吊销 ${write.key}`);
+          break;
+        }
+        case 'delete': {
+          if (!write.key) return;
+          await deleteSecret(write.key, reason);
+          message.success(`已删除 ${write.key}`);
+          break;
+        }
+        case 'batch-revoke': {
+          const result = await batchRevokeSecrets(write.keys ?? [], reason);
+          const failed = result.errors?.length ?? 0;
+          if (failed) message.warning(`批量吊销：成功 ${result.succeeded?.length ?? 0}，失败 ${failed}`);
+          else message.success(`已吊销 ${result.succeeded?.length ?? 0} 条`);
+          break;
+        }
+        case 'batch-delete': {
+          const result = await batchDeleteSecrets(write.keys ?? [], reason);
+          const failed = result.errors?.length ?? 0;
+          if (failed) message.warning(`批量删除：成功 ${result.succeeded?.length ?? 0}，失败 ${failed}`);
+          else message.success(`已删除 ${result.succeeded?.length ?? 0} 条`);
+          break;
+        }
+      }
+      setWrite(null);
+      setSelectedKeys([]);
+      await loadSecrets();
+      await loadStats();
+      if (viewing) {
+        const stillVisible = write.mode !== 'delete' && write.mode !== 'revoke';
+        if (stillVisible) setViewing({ key: viewing.key });
+      }
     } catch (err) {
-      setDetailError(errorText(err));
+      message.error(errorText(err));
     } finally {
-      setDetailLoading(false);
+      setWriteLoading(false);
+    }
+  };
+
+  const savePolicy = async (input: { auto_rotate_days?: number; notification_days_before?: number; max_versions?: number }) => {
+    try {
+      setPolicy(await upsertSecretPolicy(input));
+      message.success('已保存密钥策略');
+    } catch (err) {
+      message.error(errorText(err));
     }
   };
 
@@ -322,25 +617,22 @@ function Console() {
           disabled: true,
           label: (
             <div className="hint">
-              租户 {session.user.tenantId || '（令牌未带）'} · 应用 {session.user.appId || '平台'}
+              会话租户 {session.user.tenantId || '（令牌未带）'} · 数据作用域 {scope.tenantId}
+              {scope.appId ? ` / ${scope.appId}` : ''}
             </div>
           ),
         },
         { type: 'divider' },
+        {
+          key: 'reset-scope',
+          label: '恢复默认作用域',
+          onClick: resetScope,
+        },
         { key: 'logout', label: '退出登录', danger: true },
       ]
     : [];
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return secrets.filter((row) => {
-      const statusOk = statusFilter === 'all' || (row.status ?? '').toLowerCase() === statusFilter;
-      const textOk =
-        !q ||
-        [row.key, row.description ?? '', row.id ?? '', row.app_id ?? ''].some((value) => value.toLowerCase().includes(q));
-      return statusOk && textOk;
-    });
-  }, [secrets, query, statusFilter]);
+  const filtered = secrets;
 
   if (!authReady) {
     return (
@@ -384,8 +676,9 @@ function Console() {
         </nav>
         <div className="grow" />
         <Space size={8} wrap>
-          <Tag color="gold">建设中</Tag>
           <Tag color={DATA_MODE === 'api' ? 'blue' : 'default'}>{RUNTIME_MODE_LABEL}</Tag>
+          <Tag color="gold">ns: {API_NAMESPACE}</Tag>
+          <PortalMenu session={session} />
           {session ? (
             <Dropdown
               trigger={['click']}
@@ -403,7 +696,7 @@ function Console() {
               登录
             </Button>
           )}
-          <a className="platform-link" href={PLATFORM_URL} target="_blank" rel="noreferrer">
+          <a className="platform-link" href={fallbackPlatformUrl(window.location.hostname)} target="_blank" rel="noreferrer">
             返回平台
           </a>
         </Space>
@@ -412,39 +705,111 @@ function Console() {
       <Layout.Content className="wrap">
         <Alert
           className="banner"
-          type="info"
+          type={crossTenant ? 'warning' : 'info'}
           showIcon
-          message="密钥中心建设中"
+          message={crossTenant ? '跨租户作用域' : '密钥中心'}
           description={
             <Space size={10} wrap>
               <ApiBadge health={health} />
               <span className="hint">
                 API：<code className="mono">{API_BASE}</code>
               </span>
+              <span className="hint">
+                X-Tenant-ID：<code className="mono">{scope.tenantId}</code>
+              </span>
+              <span className="hint">
+                X-App-ID：<code className="mono">{scope.appId || '（空）'}</code>
+              </span>
+              {crossTenant ? <span className="hint">跨租户需要平台 super_admin / admin；否则服务端 403。</span> : null}
               {health.message ? <span className="hint">{health.message}</span> : null}
             </Space>
           }
         />
 
-        {page === 'overview' ? <Overview health={health} /> : null}
+        <ScopeBar
+          draft={scopeDraft}
+          current={scope}
+          onChange={setScopeDraft}
+          onApply={applyScope}
+          onReset={resetScope}
+          loading={listLoading}
+        />
+
+        {page === 'overview' ? (
+          <Overview
+            stats={stats}
+            total={total}
+            policy={policy}
+            policyError={policyError}
+            encryptionKey={encryptionKey}
+            health={health}
+            onSavePolicy={savePolicy}
+            onOpenSecrets={() => go('secrets')}
+          />
+        ) : null}
+
         {page === 'secrets' ? (
           <SecretsPage
             rows={filtered}
-            total={secrets.length}
+            total={total}
             loading={listLoading}
             error={listError}
-            query={query}
+            prefix={prefixInput}
             status={statusFilter}
-            onQuery={setQuery}
-            onStatus={setStatusFilter}
+            pageNo={pageNo}
+            pageSize={pageSize}
+            selectedKeys={selectedKeys}
+            onPrefix={(value) => {
+              setPrefixInput(value);
+              if (!value) {
+                setPrefix('');
+                setPageNo(1);
+              }
+            }}
+            onSearch={() => {
+              setPrefix(prefixInput.trim());
+              setPageNo(1);
+            }}
+            onStatus={(value) => {
+              setStatusFilter(value);
+              setPageNo(1);
+            }}
+            onPage={(next, size) => {
+              setPageNo(next);
+              setPageSize(size);
+            }}
             onReload={() => void loadSecrets()}
-            onView={(row) => void openDetail(row)}
+            onView={openDetail}
+            onSelected={setSelectedKeys}
+            onCreate={() => openWrite({ mode: 'create' })}
+            onEdit={(row) => openWrite({ mode: 'edit', key: row.key }, { description: row.description ?? '' })}
+            onRotate={(row) => openWrite({ mode: 'rotate', key: row.key }, { key: row.key })}
+            onRevoke={(row) => openWrite({ mode: 'revoke', key: row.key }, { key: row.key })}
+            onDelete={(row) => openWrite({ mode: 'delete', key: row.key }, { key: row.key })}
+            onBatchRevoke={() => openWrite({ mode: 'batch-revoke', keys: selectedKeys })}
+            onBatchDelete={() => openWrite({ mode: 'batch-delete', keys: selectedKeys })}
           />
         ) : null}
-        {page === 'audit' ? <AuditPage /> : null}
+
+        {page === 'audit' ? (
+          <AuditPage
+            rows={auditRows}
+            total={auditTotal}
+            loading={auditLoading}
+            error={auditError}
+            pageNo={auditPage}
+            action={auditAction}
+            onAction={(value) => {
+              setAuditAction(value);
+              setAuditPage(1);
+            }}
+            onPage={setAuditPage}
+            onReload={() => void loadAudit()}
+          />
+        ) : null}
       </Layout.Content>
 
-      <Drawer open={!!viewing} width={560} title="密钥详情" onClose={() => setViewing(null)} destroyOnHidden>
+      <Drawer open={!!viewing} width={640} title="密钥详情" onClose={closeDetail} destroyOnHidden>
         {viewing ? (
           <>
             {detailLoading ? (
@@ -464,12 +829,29 @@ function Console() {
                 { key: 'desc', label: '描述', children: viewing.description || detail?.description || '—' },
                 { key: 'status', label: '状态', children: statusTag(viewing.status ?? detail?.status) },
                 { key: 'version', label: '当前版本', children: `v${viewing.version ?? detail?.version ?? '—'}` },
-                { key: 'app', label: '应用', children: viewing.app_id || detail?.app_id || '平台' },
+                { key: 'app', label: '应用作用域', children: viewing.app_id || detail?.app_id || '（空）' },
                 { key: 'expires', label: '到期时间', children: fmtTime(viewing.expires_at ?? detail?.expires_at) },
                 { key: 'created', label: '创建时间', children: fmtTime(viewing.created_at ?? detail?.created_at) },
                 { key: 'updated', label: '更新时间', children: fmtTime(viewing.updated_at ?? detail?.updated_at) },
               ]}
             />
+
+            <div className="drawer-actions">
+              <Space wrap>
+                <Button size="small" onClick={() => openWrite({ mode: 'rotate', key: viewing.key }, { key: viewing.key })}>
+                  轮换
+                </Button>
+                <Button size="small" onClick={() => openWrite({ mode: 'edit', key: viewing.key }, { description: viewing.description ?? '' })}>
+                  改描述
+                </Button>
+                <Button size="small" danger onClick={() => openWrite({ mode: 'revoke', key: viewing.key }, { key: viewing.key })}>
+                  吊销
+                </Button>
+                <Button size="small" danger onClick={() => openWrite({ mode: 'delete', key: viewing.key }, { key: viewing.key })}>
+                  删除
+                </Button>
+              </Space>
+            </div>
 
             <h3 className="sub-title">版本</h3>
             <VersionTable versions={detail?.versions ?? []} />
@@ -479,12 +861,84 @@ function Console() {
               type="warning"
               showIcon
               message="密钥值不在本界面展示"
-              description="创建 / 轮换 / 撤销等写入能力尚未开放；当前仅提供只读占位。"
+              description="本版本只提供元数据与版本号；明文读取接口（/versions/value）有意未接入。"
             />
           </>
         ) : null}
       </Drawer>
+
+      <WriteDialog
+        state={write}
+        form={form}
+        loading={writeLoading}
+        onCancel={() => setWrite(null)}
+        onSubmit={() => void submitWrite()}
+      />
     </Layout>
+  );
+}
+
+/* ------------------------------ 作用域栏 ------------------------------ */
+
+function ScopeBar(props: {
+  draft: Scope;
+  current: Scope;
+  loading: boolean;
+  onChange: (next: Scope) => void;
+  onApply: () => void;
+  onReset: () => void;
+}) {
+  const { draft, current, loading, onChange, onApply, onReset } = props;
+  const preset = [PLATFORM_TENANT_ID, SYSTEM_TENANT].includes(draft.tenantId) ? draft.tenantId : 'custom';
+  const dirty = draft.tenantId !== current.tenantId || draft.appId !== current.appId;
+
+  return (
+    <Card size="small" className="scope-card">
+      <Space wrap size={10} align="center">
+        <Text type="secondary">数据作用域</Text>
+        <Select
+          style={{ width: 200 }}
+          value={preset}
+          onChange={(value) => {
+            if (value === 'custom') {
+              onChange({ ...draft, tenantId: preset === 'custom' ? draft.tenantId : '' });
+              return;
+            }
+            onChange({ ...draft, tenantId: value });
+          }}
+          options={[
+            { value: PLATFORM_TENANT_ID, label: '平台租户（platform）' },
+            { value: SYSTEM_TENANT, label: '系统租户（_system，服务密钥）' },
+            { value: 'custom', label: '指定租户…' },
+          ]}
+        />
+        {preset === 'custom' ? (
+          <Input
+            style={{ width: 260 }}
+            placeholder="租户 ULID（如 01K...）"
+            value={draft.tenantId}
+            onChange={(event) => onChange({ ...draft, tenantId: event.target.value })}
+            allowClear
+          />
+        ) : null}
+        <Input
+          style={{ width: 220 }}
+          placeholder="应用作用域 X-App-ID（如 secret-service）"
+          value={draft.appId}
+          onChange={(event) => onChange({ ...draft, appId: event.target.value })}
+          allowClear
+        />
+        <Button type="primary" size="small" disabled={!dirty || !draft.tenantId.trim()} loading={loading} onClick={onApply}>
+          应用
+        </Button>
+        <Button size="small" onClick={onReset}>
+          恢复默认
+        </Button>
+        <span className="hint">
+          服务密钥：租户 <code className="mono">_system</code> + 应用 <code className="mono">&lt;服务名&gt;</code>
+        </span>
+      </Space>
+    </Card>
   );
 }
 
@@ -503,13 +957,13 @@ function LoginPage({ error, onLogin }: { error: string; onLogin: () => void }) {
             </Text>
           </div>
           <h1 className="page">登录后管理密钥</h1>
-          <p className="desc">密钥服务管理面需要 Autional 账号登录；当前版本为只读占位。</p>
+          <p className="desc">需要 Autional 管理面账号（super_admin / admin）与 secret:admin 权限。</p>
           {error ? <Alert className="banner" type="error" showIcon message={error} /> : null}
           <Space size={12} wrap>
             <Button type="primary" onClick={onLogin}>
               使用 Autional 账号登录
             </Button>
-            <a className="platform-link" href={PLATFORM_URL} target="_blank" rel="noreferrer">
+            <a className="platform-link" href={fallbackPlatformUrl(window.location.hostname)} target="_blank" rel="noreferrer">
               返回平台
             </a>
           </Space>
@@ -529,63 +983,190 @@ function ApiBadge({ health }: { health: HealthState }) {
   return <Tag color="red">API 不可达</Tag>;
 }
 
+/* ------------------------------ 门户切换 ------------------------------ */
+
+function PortalMenu({ session }: { session: Session | null }) {
+  const [state, setState] = useState<{ status: 'loading' | 'ready' | 'degraded'; portals: PortalApplication[] }>({
+    status: 'loading',
+    portals: [],
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let alive = true;
+    const token = session?.accessToken ?? '';
+    if (!token) {
+      setState({ status: 'degraded', portals: [] });
+      return () => controller.abort();
+    }
+    setState({ status: 'loading', portals: [] });
+    void (async () => {
+      try {
+        const rows = await fetchPortals({ tenantId: PLATFORM_TENANT_ID, accessToken: token, signal: controller.signal });
+        if (!alive) return;
+        const visible = filterPortals(rows, { tenantId: PLATFORM_TENANT_ID, roles: session?.user.roles })
+          .slice()
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        const hasOther = visible.some((item) => item.code !== CURRENT_PORTAL_CODE);
+        setState(hasOther ? { status: 'ready', portals: visible } : { status: 'degraded', portals: [] });
+      } catch {
+        if (alive) setState({ status: 'degraded', portals: [] });
+      }
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+    };
+  }, [session]);
+
+  const loading = state.status === 'loading';
+  const degraded = state.status === 'degraded';
+  const hostname = window.location.hostname;
+  const rootDomain = rootDomainOf(hostname);
+
+  const items: MenuProps['items'] = degraded
+    ? [{ key: 'fallback:platform', label: '平台控制台' }]
+    : state.portals.map((portal) => ({
+        key: portal.code,
+        disabled: portal.code === CURRENT_PORTAL_CODE,
+        label: (
+          <div className="portal-item">
+            <span>
+              {portal.name || portal.code}
+              {portal.code === CURRENT_PORTAL_CODE ? (
+                <Tag color="blue" className="portal-current">
+                  当前
+                </Tag>
+              ) : null}
+            </span>
+            {portal.description ? <span className="hint">{portal.description}</span> : null}
+          </div>
+        ),
+      }));
+
+  const openPortal = (key: string) => {
+    if (degraded) {
+      window.location.assign(fallbackPlatformUrl(hostname));
+      return;
+    }
+    const entry = state.portals.find((item) => item.code === key);
+    if (!entry || entry.code === CURRENT_PORTAL_CODE) return;
+    const url = buildPortalUrl(entry, rootDomain, window.location.protocol);
+    if (url) window.location.assign(url);
+  };
+
+  return (
+    <Tooltip title={degraded ? '门户目录不可用（已降级到平台控制台）' : '切换门户'}>
+      <Dropdown trigger={['click']} disabled={loading} menu={{ items, onClick: ({ key }) => openPortal(key), style: { minWidth: 220 } }}>
+        <Button size="small" loading={loading}>
+          门户
+        </Button>
+      </Dropdown>
+    </Tooltip>
+  );
+}
+
 /* -------------------------------- 概览 -------------------------------- */
 
-const OVERVIEW_STATS = [
-  { title: '密钥总数', value: 128, hint: '占位' },
-  { title: '生效中', value: 120, hint: '占位' },
-  { title: '30 天内到期', value: 6, hint: '占位' },
-  { title: '待轮换', value: 2, hint: '占位' },
-];
+function Overview(props: {
+  stats: { active: number; revoked: number; expired: number };
+  total: number;
+  policy: SecretPolicy | null;
+  policyError: string;
+  encryptionKey: string;
+  health: HealthState;
+  onSavePolicy: (input: { auto_rotate_days?: number; notification_days_before?: number; max_versions?: number }) => void;
+  onOpenSecrets: () => void;
+}) {
+  const { stats, total, policy, policyError, encryptionKey, health, onSavePolicy, onOpenSecrets } = props;
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
 
-function Overview({ health }: { health: HealthState }) {
+  useEffect(() => {
+    form.setFieldsValue({
+      auto_rotate_days: policy?.auto_rotate_days ?? 0,
+      notification_days_before: policy?.notification_days_before ?? 7,
+      max_versions: policy?.max_versions ?? 10,
+    });
+  }, [policy, form]);
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1 className="page">密钥中心概览</h1>
-          <p className="desc">集中查看密钥元数据、版本与到期情况；本版本为只读占位。</p>
+          <p className="desc">平台级密钥盘点：跨租户切换作用域，服务密钥位于 _system 租户。</p>
         </div>
+        <Button type="primary" onClick={onOpenSecrets}>
+          进入密钥列表
+        </Button>
       </div>
 
       <Row gutter={12} className="stats">
-        {OVERVIEW_STATS.map((item) => (
-          <Col span={6} key={item.title}>
-            <Card size="small">
-              <Statistic title={item.title} value={item.value} />
-              <Text type="secondary" className="hint">
-                {item.hint}
-              </Text>
-            </Card>
-          </Col>
-        ))}
+        <Col span={6}>
+          <Card size="small">
+            <Statistic title="密钥总数（当前作用域）" value={total} />
+            <Text type="secondary" className="hint">
+              来自服务端 total
+            </Text>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small">
+            <Statistic title="生效中" value={stats.active} valueStyle={{ color: '#15803d' }} />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small">
+            <Statistic title="已过期" value={stats.expired} valueStyle={{ color: '#c2410c' }} />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small">
+            <Statistic title="已吊销" value={stats.revoked} valueStyle={{ color: '#b91c1c' }} />
+          </Card>
+        </Col>
       </Row>
-
-      <Alert
-        className="banner top-gap"
-        type="warning"
-        showIcon
-        message="统计为占位数据"
-        description="接入密钥服务后，这里会展示真实的密钥数量、到期与轮换提醒。"
-      />
 
       <Row gutter={12} className="top-gap">
         <Col span={14}>
-          <Card size="small" title="能力规划">
-            <ol className="struct">
-              <li>
-                <b>密钥列表</b>：按前缀 / 状态筛选，只展示元数据。
-              </li>
-              <li>
-                <b>密钥详情</b>：版本历史、创建者、到期时间。
-              </li>
-              <li>
-                <b>轮换与撤销</b>：写入能力规划中（需权限点与变更原因）。
-              </li>
-              <li>
-                <b>审计</b>：读取 / 轮换 / 撤销事件留痕。
-              </li>
-            </ol>
+          <Card
+            size="small"
+            title="密钥策略"
+            extra={
+              <Button
+                size="small"
+                type="primary"
+                loading={saving}
+                onClick={() => {
+                  setSaving(true);
+                  void form.validateFields().then((values) => {
+                    onSavePolicy({
+                      auto_rotate_days: Number(values.auto_rotate_days ?? 0),
+                      notification_days_before: Number(values.notification_days_before ?? 0),
+                      max_versions: Number(values.max_versions ?? 10),
+                    });
+                    setSaving(false);
+                  }).catch(() => setSaving(false));
+                }}
+              >
+                保存
+              </Button>
+            }
+          >
+            {policyError ? <Alert className="banner" type="warning" showIcon message="策略读取失败" description={policyError} /> : null}
+            <Form form={form} layout="inline" className="policy-form">
+              <Form.Item name="auto_rotate_days" label="自动轮换（天，0=不自动）">
+                <InputNumber min={0} max={36500} style={{ width: 140 }} />
+              </Form.Item>
+              <Form.Item name="notification_days_before" label="提前提醒（天）">
+                <InputNumber min={0} max={3650} style={{ width: 120 }} />
+              </Form.Item>
+              <Form.Item name="max_versions" label="版本保留数">
+                <InputNumber min={1} max={10000} style={{ width: 100 }} />
+              </Form.Item>
+            </Form>
+            <div className="hint top-gap">策略按租户保存；切换作用域后请重新查看。</div>
           </Card>
         </Col>
         <Col span={10}>
@@ -596,12 +1177,27 @@ function Overview({ health }: { health: HealthState }) {
                 <ApiBadge health={health} />
               </Space>
               <div className="hint mono">{API_BASE}</div>
-              <div className="hint">数据模式：{RUNTIME_MODE_LABEL} · 鉴权：{AUTH_MODE === 'oidc' ? 'OIDC + PKCE' : '演示会话'}</div>
-              <div className="hint">当前版本不展示密钥值，也不提供写入操作。</div>
+              <div className="hint">
+                数据模式：{RUNTIME_MODE_LABEL} · 鉴权：{AUTH_MODE === 'oidc' ? 'OIDC + PKCE' : '演示会话'}
+              </div>
+              <div className="hint">
+                命名空间：<code className="mono">{API_NAMESPACE}</code>（必须 ∈ 实例 SECRET_NAMESPACES）
+              </div>
+              <div className="hint">
+                当前加密密钥：<code className="mono">{encryptionKey || '—'}</code>
+              </div>
             </Space>
           </Card>
         </Col>
       </Row>
+
+      <Alert
+        className="banner top-gap"
+        type="info"
+        showIcon
+        message="本界面不展示密钥值"
+        description="密钥值只写不读；创建 / 轮换使用新值覆盖，历史版本只保留版本号与创建者。"
+      />
     </>
   );
 }
@@ -613,33 +1209,86 @@ function SecretsPage(props: {
   total: number;
   loading: boolean;
   error: string;
-  query: string;
+  prefix: string;
   status: string;
-  onQuery: (value: string) => void;
+  pageNo: number;
+  pageSize: number;
+  selectedKeys: string[];
+  onPrefix: (value: string) => void;
+  onSearch: () => void;
   onStatus: (value: string) => void;
+  onPage: (page: number, size: number) => void;
   onReload: () => void;
   onView: (row: SecretItem) => void;
+  onSelected: (keys: string[]) => void;
+  onCreate: () => void;
+  onEdit: (row: SecretItem) => void;
+  onRotate: (row: SecretItem) => void;
+  onRevoke: (row: SecretItem) => void;
+  onDelete: (row: SecretItem) => void;
+  onBatchRevoke: () => void;
+  onBatchDelete: () => void;
 }) {
-  const { rows, total, loading, error, query, status, onQuery, onStatus, onReload, onView } = props;
+  const {
+    rows,
+    total,
+    loading,
+    error,
+    prefix,
+    status,
+    pageNo,
+    pageSize,
+    selectedKeys,
+    onPrefix,
+    onSearch,
+    onStatus,
+    onPage,
+    onReload,
+    onView,
+    onSelected,
+    onCreate,
+    onEdit,
+    onRotate,
+    onRevoke,
+    onDelete,
+    onBatchRevoke,
+    onBatchDelete,
+  } = props;
 
   const columns: TableProps<SecretItem>['columns'] = [
     {
       title: '密钥路径',
       dataIndex: 'key',
-      width: '32%',
-      render: (value: string) => <code className="mono key-cell">{value}</code>,
+      width: '30%',
+      render: (value: string, row) => (
+        <Button type="link" size="small" className="key-link" onClick={() => onView(row)}>
+          <code className="mono key-cell">{value}</code>
+        </Button>
+      ),
     },
     { title: '描述', dataIndex: 'description', ellipsis: true, render: (value?: string) => <Text type="secondary">{value || '—'}</Text> },
-    { title: '版本', dataIndex: 'version', width: 80, render: (value?: number) => (value ? `v${value}` : '—') },
-    { title: '状态', dataIndex: 'status', width: 100, render: (value?: string) => statusTag(value) },
-    { title: '更新时间', dataIndex: 'updated_at', width: 190, render: (value?: string) => fmtTime(value) },
+    { title: '版本', dataIndex: 'version', width: 70, render: (value?: number) => (value ? `v${value}` : '—') },
+    { title: '状态', dataIndex: 'status', width: 90, render: (value?: string) => statusTag(value) },
+    { title: '到期', dataIndex: 'expires_at', width: 170, render: (value?: string | null) => fmtTime(value) },
+    { title: '更新时间', dataIndex: 'updated_at', width: 170, render: (value?: string) => fmtTime(value) },
     {
       title: '操作',
-      width: 90,
-      render: (_: unknown, row: SecretItem) => (
-        <Button size="small" type="link" onClick={() => onView(row)}>
-          查看
-        </Button>
+      width: 230,
+      render: (_: unknown, row) => (
+        <Space size={0} wrap>
+          <Button size="small" type="link" onClick={() => onRotate(row)} disabled={row.status === 'revoked'}>
+            轮换
+          </Button>
+          <Button size="small" type="link" onClick={() => onEdit(row)}>
+            改描述
+          </Button>
+          <Button size="small" type="link" danger onClick={() => onRevoke(row)} disabled={row.status === 'revoked'}>
+            吊销
+          </Button>
+          <Button size="small" type="link" danger onClick={() => onDelete(row)}>
+            删除
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -649,17 +1298,24 @@ function SecretsPage(props: {
       <div className="page-head">
         <div>
           <h1 className="page">密钥</h1>
-          <p className="desc">只读占位列表：展示密钥元数据，不展示密钥值。</p>
+          <p className="desc">元数据与版本；密钥值只写不读。服务密钥请切到 _system + 服务名。</p>
         </div>
+        <Space>
+          {selectedKeys.length > 0 ? (
+            <>
+              <Button danger onClick={onBatchRevoke}>
+                批量吊销（{selectedKeys.length}）
+              </Button>
+              <Button danger onClick={onBatchDelete}>
+                批量删除（{selectedKeys.length}）
+              </Button>
+            </>
+          ) : null}
+          <Button type="primary" onClick={onCreate}>
+            创建密钥
+          </Button>
+        </Space>
       </div>
-
-      <Alert
-        className="banner"
-        type="info"
-        showIcon
-        message="只读占位"
-        description="创建 / 轮换 / 撤销 / 删除等写入能力尚未开放；接入后需要权限点与变更原因。"
-      />
 
       {error ? (
         <Alert
@@ -680,13 +1336,14 @@ function SecretsPage(props: {
         <Space wrap className="filters">
           <Input.Search
             allowClear
-            placeholder="搜索密钥路径 / 描述…"
+            placeholder="按前缀搜索密钥路径…"
             style={{ width: 280 }}
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
+            value={prefix}
+            onChange={(event) => onPrefix(event.target.value)}
+            onSearch={() => onSearch()}
           />
           <Select
-            style={{ width: 160 }}
+            style={{ width: 150 }}
             value={status}
             onChange={onStatus}
             options={[
@@ -696,9 +1353,7 @@ function SecretsPage(props: {
               { value: 'revoked', label: '已撤销' },
             ]}
           />
-          <span className="hint">
-            共 {total} 条（当前筛选 {rows.length} 条）{DATA_MODE === 'mock' ? ' · 占位数据' : ''}
-          </span>
+          <span className="hint">共 {total} 条</span>
           <div className="grow" />
           {loading ? <Spin size="small" /> : null}
           <Button size="small" onClick={onReload} loading={loading}>
@@ -712,9 +1367,21 @@ function SecretsPage(props: {
           dataSource={rows}
           columns={columns}
           loading={loading}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
-          scroll={{ x: 900 }}
-          locale={{ emptyText: <Empty description="没有匹配的密钥（占位）" /> }}
+          rowSelection={{
+            selectedRowKeys: selectedKeys,
+            onChange: (keys) => onSelected(keys.map(String)),
+          }}
+          pagination={{
+            current: pageNo,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50, 100],
+            showTotal: (value) => `共 ${value} 条`,
+            onChange: (next, size) => onPage(next, size),
+          }}
+          scroll={{ x: 1080 }}
+          locale={{ emptyText: <Empty description="当前作用域下没有密钥" /> }}
         />
       </Card>
     </>
@@ -722,7 +1389,7 @@ function SecretsPage(props: {
 }
 
 function VersionTable({ versions }: { versions: SecretVersion[] }) {
-  if (!versions.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无版本信息（占位）" />;
+  if (!versions.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无版本信息" />;
   return (
     <Table
       size="small"
@@ -738,42 +1405,223 @@ function VersionTable({ versions }: { versions: SecretVersion[] }) {
   );
 }
 
+/* -------------------------------- 写入弹窗 -------------------------------- */
+
+const WRITE_TITLE: Record<WriteMode, string> = {
+  create: '创建密钥',
+  edit: '修改元信息',
+  rotate: '轮换密钥',
+  revoke: '吊销密钥',
+  delete: '删除密钥',
+  'batch-revoke': '批量吊销',
+  'batch-delete': '批量删除',
+};
+
+function WriteDialog(props: {
+  state: WriteState | null;
+  form: FormInstance;
+  loading: boolean;
+  onCancel: () => void;
+  onSubmit: () => void;
+}) {
+  const { state, form, loading, onCancel, onSubmit } = props;
+  const mode = state?.mode;
+  const destructive = mode === 'revoke' || mode === 'delete' || mode === 'batch-revoke' || mode === 'batch-delete';
+  const count = state?.keys?.length ?? 0;
+
+  return (
+    <Modal
+      open={!!state}
+      title={mode ? WRITE_TITLE[mode] : ''}
+      onCancel={onCancel}
+      onOk={onSubmit}
+      okText={destructive ? '确认' : '保存'}
+      okButtonProps={{ danger: destructive, loading }}
+      destroyOnHidden
+      width={560}
+    >
+      <Form form={form} layout="vertical">
+        {mode === 'create' ? (
+          <>
+            <Form.Item
+              name="key"
+              label="密钥路径"
+              rules={[{ required: true, message: '请输入密钥路径' }, { max: 512, message: '最多 512 字符' }]}
+              extra="建议使用斜杠分层路径，如 db/postgres/password。"
+            >
+              <Input placeholder="db/postgres/password" autoComplete="off" />
+            </Form.Item>
+            <Form.Item name="value" label="密钥值" rules={[{ required: true, message: '请输入密钥值' }]} extra="只写不读；创建后只能轮换，不能回看。">
+              <Input.Password autoComplete="new-password" placeholder="输入密钥值" />
+            </Form.Item>
+            <Form.Item name="description" label="描述">
+              <Input.TextArea rows={2} placeholder="用途 / 消费方" />
+            </Form.Item>
+            <Form.Item name="expires_at" label="到期时间（可选）" extra="ISO 时间，如 2027-01-01T00:00:00Z。">
+              <Input placeholder="2027-01-01T00:00:00Z" autoComplete="off" />
+            </Form.Item>
+          </>
+        ) : null}
+
+        {mode === 'edit' ? (
+          <>
+            <Form.Item label="密钥路径">
+              <Input value={state?.key} disabled />
+            </Form.Item>
+            <Form.Item name="description" label="描述">
+              <Input.TextArea rows={3} />
+            </Form.Item>
+          </>
+        ) : null}
+
+        {mode === 'rotate' ? (
+          <>
+            <Form.Item label="密钥路径">
+              <Input value={state?.key} disabled />
+            </Form.Item>
+            <Form.Item name="value" label="新密钥值" rules={[{ required: true, message: '请输入新密钥值' }]} extra="轮换会推进版本；旧版本保留但不可读取。">
+              <Input.Password autoComplete="new-password" placeholder="输入新密钥值" />
+            </Form.Item>
+          </>
+        ) : null}
+
+        {mode === 'revoke' || mode === 'delete' ? (
+          <>
+            <Form.Item label="密钥路径">
+              <Input value={state?.key} disabled />
+            </Form.Item>
+            <Alert
+              className="banner"
+              type="warning"
+              showIcon
+              message={mode === 'revoke' ? '吊销后无法再获取该密钥值' : '删除为软删除，保留期后永久清除'}
+            />
+          </>
+        ) : null}
+
+        {mode === 'batch-revoke' || mode === 'batch-delete' ? (
+          <Alert
+            className="banner"
+            type="warning"
+            showIcon
+            message={`将${mode === 'batch-revoke' ? '吊销' : '删除'} ${count} 条密钥`}
+            description={mode === 'batch-revoke' ? '吊销后无法再获取这些密钥值。' : '软删除，保留期后永久清除。'}
+          />
+        ) : null}
+
+        <Form.Item name="reason" label="变更原因（可选）" extra="当前写入审计事件的 X-Change-Reason 头；服务端落库待波 2。">
+          <Input placeholder="例如：季度轮换 / 凭据泄露应急处置" />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+}
+
 /* -------------------------------- 审计 -------------------------------- */
 
-function AuditPage() {
+const AUDIT_ACTIONS = [
+  'all',
+  'admin_list',
+  'admin_detail',
+  'store',
+  'update',
+  'rotate',
+  'revoke',
+  'delete',
+  'batch_revoke',
+  'batch_delete',
+  'policy_upsert',
+];
+
+function AuditPage(props: {
+  rows: AuditLogItem[];
+  total: number;
+  loading: boolean;
+  error: string;
+  pageNo: number;
+  action: string;
+  onAction: (value: string) => void;
+  onPage: (page: number) => void;
+  onReload: () => void;
+}) {
+  const { rows, total, loading, error, pageNo, action, onAction, onPage, onReload } = props;
+
   return (
     <>
       <div className="page-head">
         <div>
           <h1 className="page">审计</h1>
-          <p className="desc">密钥读取与变更事件的审计留痕（占位）。</p>
+          <p className="desc">密钥管理面操作留痕（module=secret）。租户由登录令牌决定。</p>
         </div>
+        <Button size="small" onClick={onReload} loading={loading}>
+          刷新
+        </Button>
       </div>
 
       <Alert
         className="banner"
         type="info"
         showIcon
-        message="审计为占位"
-        description="接入密钥服务后，这里会展示 admin_list / admin_detail / rotate / revoke 等审计事件。"
+        message="审计范围：认证租户"
+        description="服务端强制使用 JWT 租户查询；跨租户审计需要 audit-service 支持平台范围。跨租户写操作的归属租户以服务端记录为准。"
       />
 
+      {error ? (
+        <Alert
+          className="banner"
+          type="error"
+          showIcon
+          message="读取审计失败"
+          description={`${error}（审计接口要求 audit:read 与 scope=read）`}
+        />
+      ) : null}
+
       <Card size="small">
+        <Space wrap className="filters">
+          <Select
+            style={{ width: 200 }}
+            value={action}
+            onChange={onAction}
+            options={AUDIT_ACTIONS.map((value) => ({ value, label: value === 'all' ? '全部动作' : value }))}
+          />
+          <span className="hint">共 {total} 条</span>
+        </Space>
         <Table
           size="small"
-          rowKey="id"
-          dataSource={MOCK_AUDIT}
-          pagination={{ pageSize: 20, showSizeChanger: false }}
+          rowKey={(row) => String(row?.id ?? '')}
+          dataSource={rows}
+          loading={loading}
+          pagination={{ current: pageNo, pageSize: 20, total, onChange: (next) => onPage(next), showSizeChanger: false }}
+          scroll={{ x: 900 }}
+          locale={{ emptyText: <Empty description="没有匹配的审计事件" /> }}
           columns={[
-            { title: '时间', dataIndex: 'time', width: 190 },
-            { title: '操作者', dataIndex: 'actor', width: 180 },
-            { title: '动作', dataIndex: 'action', width: 160, render: (value: string) => <code className="mono small">{value}</code> },
-            { title: '对象', dataIndex: 'target', render: (value: string) => <code className="mono small">{value}</code> },
+            { title: '时间', dataIndex: 'timestamp', width: 180, render: (value?: number) => fmtTime(value) },
+            { title: '操作者', dataIndex: 'operator_id', width: 200, ellipsis: true, render: (value?: string) => value || '—' },
+            {
+              title: '动作',
+              dataIndex: 'action',
+              width: 160,
+              render: (value?: string) => <code className="mono small">{value || '—'}</code>,
+            },
+            {
+              title: '对象',
+              dataIndex: 'target_id',
+              ellipsis: true,
+              render: (value?: string, row?: AuditLogItem) => (
+                <span>
+                  <code className="mono small">{value || '—'}</code>
+                  {row?.target_type ? <Text type="secondary" className="small"> · {row.target_type}</Text> : null}
+                </span>
+              ),
+            },
             {
               title: '结果',
-              dataIndex: 'result',
+              dataIndex: 'status',
               width: 100,
-              render: (value: string) => <Tag color={value === '成功' ? 'green' : 'default'}>{value}</Tag>,
+              render: (value?: number) => {
+                const ok = typeof value !== 'number' || (value >= 200 && value < 400);
+                return <Tag color={ok ? 'green' : 'red'}>{ok ? '成功' : String(value ?? '—')}</Tag>;
+              },
             },
           ]}
         />

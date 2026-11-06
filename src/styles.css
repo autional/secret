@@ -192,3 +192,30 @@ code,
   min-width: 160px;
   line-height: 1.35;
 }
+
+/* ---------------------- 数据作用域 / 写入 / 门户 ---------------------- */
+
+.scope-card {
+  margin-bottom: 16px;
+}
+.drawer-actions {
+  margin-top: 16px;
+}
+.policy-form .ant-form-item {
+  margin-bottom: 8px;
+}
+.key-link {
+  padding: 0;
+  height: auto;
+  text-align: left;
+  white-space: normal;
+}
+.portal-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+.portal-item .portal-current {
+  margin-left: 8px;
+}

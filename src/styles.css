@@ -1,0 +1,194 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #f6f7f9;
+  color: #111827;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+code,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+.small {
+  font-size: 12px;
+}
+.grow {
+  flex: 1;
+}
+
+.app {
+  min-height: 100vh;
+  background: #f6f7f9;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 56px;
+  padding: 0 24px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  line-height: normal;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  font-size: 15px;
+}
+.brand .mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #0f766e, #2563eb);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+.brand .sub {
+  font-size: 12px;
+  font-weight: 400;
+}
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+.nav a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #6b7280;
+  cursor: pointer;
+}
+.nav a.on {
+  background: #f1f5f9;
+  color: #111827;
+  font-weight: 600;
+}
+.nav a:hover {
+  background: #f8fafc;
+}
+.platform-link {
+  font-size: 13px;
+  color: #2563eb;
+  padding: 4px 2px;
+  white-space: nowrap;
+}
+.platform-link:hover {
+  text-decoration: underline;
+}
+
+.wrap {
+  max-width: 1320px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px;
+}
+.banner {
+  margin-bottom: 16px;
+}
+.page {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.desc {
+  color: #6b7280;
+  font-size: 13px;
+  margin: 0;
+}
+.section {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 26px 0 12px;
+}
+.stats {
+  margin-bottom: 4px;
+}
+.hint {
+  color: #9ca3af;
+  font-size: 12px;
+}
+.top-gap {
+  margin-top: 16px;
+}
+.small-gap {
+  padding: 12px 0;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0 16px;
+}
+.sub-title {
+  margin: 18px 0 10px;
+  font-weight: 650;
+  font-size: 13px;
+}
+.key-cell {
+  word-break: break-all;
+  line-height: 1.45;
+}
+.filters {
+  margin-bottom: 12px;
+}
+.struct {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 2;
+  font-size: 13px;
+}
+
+/* ---------------------- 登录 / 加载 / 状态 ---------------------- */
+
+.boot {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #f6f7f9;
+}
+.login-card {
+  width: 440px;
+  max-width: calc(100vw - 32px);
+}
+.login-card .brand {
+  margin-bottom: 14px;
+}
+.page-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 0;
+}
+.user-who {
+  min-width: 160px;
+  line-height: 1.35;
+}

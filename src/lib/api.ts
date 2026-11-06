@@ -226,6 +226,14 @@ export async function getSecretDetail(key: string): Promise<SecretDetail> {
   return unwrap(res, '详情');
 }
 
+/** 应用作用域（tenant 下实际存在的 app_id 与条目数）。 */
+export type AppScope = { app_id: string; secret_count: number };
+
+export async function listAppScopes(): Promise<AppScope[]> {
+  const res = await request<{ data?: AppScope[] }>(API_BASE, '/scopes');
+  return Array.isArray(res?.data) ? res.data : [];
+}
+
 /* -------------------------------- 密钥写 -------------------------------- */
 
 export type CreateSecretInput = {

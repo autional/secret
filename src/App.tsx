@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   App as AntdApp,
+  AutoComplete,
   Button,
   Card,
   Col,
@@ -48,6 +49,7 @@ import {
   getEncryptionKeys,
   getSecretDetail,
   getSecretPolicy,
+  listAppScopes,
   listAudit,
   listSecrets,
   revokeSecret,
@@ -201,6 +203,7 @@ function Console() {
 
   const [scope, setScope] = useState<Scope>(() => resolveScope());
   const [scopeDraft, setScopeDraft] = useState<Scope>(() => resolveScope());
+  const [appOptions, setAppOptions] = useState<{ value: string; label: string }[]>([]);
 
   const [secrets, setSecrets] = useState<SecretItem[]>(DATA_MODE === 'api' ? [] : MOCK_SECRETS);
   const [total, setTotal] = useState(DATA_MODE === 'api' ? 0 : MOCK_SECRETS.length);
@@ -235,6 +238,12 @@ function Console() {
 
   const needsLogin = !session && (REQUIRE_AUTH || DATA_MODE === 'api');
   const crossTenant = isCrossTenant(scope);
+  /** 只读角色（security_admin 且非超管/管理员）。令牌未带 roles 时不判定，交由服务端 403 兜底。 */
+  const readOnly = useMemo(() => {
+    const roles = session?.user.roles ?? [];
+    if (roles.length === 0) return false;
+    return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
+  }, [session]);
 
   const loadSecrets = useCallback(async () => {
     if (DATA_MODE !== 'api') {
@@ -399,6 +408,31 @@ function Console() {
     void loadPolicy();
   }, [authReady, session, scope, loadStats, loadPolicy]);
 
+  /* 应用作用域枚举：切换租户后刷新（供 X-App-ID 选择器） */
+  useEffect(() => {
+    if (!authReady || !session || DATA_MODE !== 'api') {
+      setAppOptions([]);
+      return;
+    }
+    let alive = true;
+    void listAppScopes()
+      .then((rows) => {
+        if (!alive) return;
+        setAppOptions(
+          rows.map((row) => ({
+            value: row.app_id,
+            label: `${row.app_id}（${row.secret_count} 条）`,
+          })),
+        );
+      })
+      .catch(() => {
+        if (alive) setAppOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authReady, session, scope]);
+
   /* 审计：进入页面或筛选变化时加载 */
   useEffect(() => {
     if (page !== 'audit' || !authReady || !session) return;
@@ -503,6 +537,10 @@ function Console() {
 
   const submitWrite = async () => {
     if (!write) return;
+    if (readOnly) {
+      message.info('只读角色（security_admin）不可写');
+      return;
+    }
     if (DATA_MODE !== 'api') {
       message.info('演示模式不支持写入：设置 VITE_DATA_MODE=api 并登录后可用');
       return;
@@ -677,6 +715,7 @@ function Console() {
         <div className="grow" />
         <Space size={8} wrap>
           <Tag color={DATA_MODE === 'api' ? 'blue' : 'default'}>{RUNTIME_MODE_LABEL}</Tag>
+          {readOnly ? <Tag>只读（security_admin）</Tag> : null}
           <Tag color="gold">ns: {API_NAMESPACE}</Tag>
           <PortalMenu session={session} />
           {session ? (
@@ -729,6 +768,7 @@ function Console() {
         <ScopeBar
           draft={scopeDraft}
           current={scope}
+          appOptions={appOptions}
           onChange={setScopeDraft}
           onApply={applyScope}
           onReset={resetScope}
@@ -743,6 +783,7 @@ function Console() {
             policyError={policyError}
             encryptionKey={encryptionKey}
             health={health}
+            readOnly={readOnly}
             onSavePolicy={savePolicy}
             onOpenSecrets={() => go('secrets')}
           />
@@ -781,6 +822,7 @@ function Console() {
             onReload={() => void loadSecrets()}
             onView={openDetail}
             onSelected={setSelectedKeys}
+            readOnly={readOnly}
             onCreate={() => openWrite({ mode: 'create' })}
             onEdit={(row) => openWrite({ mode: 'edit', key: row.key }, { description: row.description ?? '' })}
             onRotate={(row) => openWrite({ mode: 'rotate', key: row.key }, { key: row.key })}
@@ -837,20 +879,24 @@ function Console() {
             />
 
             <div className="drawer-actions">
-              <Space wrap>
-                <Button size="small" onClick={() => openWrite({ mode: 'rotate', key: viewing.key }, { key: viewing.key })}>
-                  轮换
-                </Button>
-                <Button size="small" onClick={() => openWrite({ mode: 'edit', key: viewing.key }, { description: viewing.description ?? '' })}>
-                  改描述
-                </Button>
-                <Button size="small" danger onClick={() => openWrite({ mode: 'revoke', key: viewing.key }, { key: viewing.key })}>
-                  吊销
-                </Button>
-                <Button size="small" danger onClick={() => openWrite({ mode: 'delete', key: viewing.key }, { key: viewing.key })}>
-                  删除
-                </Button>
-              </Space>
+              {readOnly ? (
+                <Tag>只读角色：不可写</Tag>
+              ) : (
+                <Space wrap>
+                  <Button size="small" onClick={() => openWrite({ mode: 'rotate', key: viewing.key }, { key: viewing.key })}>
+                    轮换
+                  </Button>
+                  <Button size="small" onClick={() => openWrite({ mode: 'edit', key: viewing.key }, { description: viewing.description ?? '' })}>
+                    改描述
+                  </Button>
+                  <Button size="small" danger onClick={() => openWrite({ mode: 'revoke', key: viewing.key }, { key: viewing.key })}>
+                    吊销
+                  </Button>
+                  <Button size="small" danger onClick={() => openWrite({ mode: 'delete', key: viewing.key }, { key: viewing.key })}>
+                    删除
+                  </Button>
+                </Space>
+              )}
             </div>
 
             <h3 className="sub-title">版本</h3>
@@ -883,12 +929,13 @@ function Console() {
 function ScopeBar(props: {
   draft: Scope;
   current: Scope;
+  appOptions: { value: string; label: string }[];
   loading: boolean;
   onChange: (next: Scope) => void;
   onApply: () => void;
   onReset: () => void;
 }) {
-  const { draft, current, loading, onChange, onApply, onReset } = props;
+  const { draft, current, appOptions, loading, onChange, onApply, onReset } = props;
   const preset = [PLATFORM_TENANT_ID, SYSTEM_TENANT].includes(draft.tenantId) ? draft.tenantId : 'custom';
   const dirty = draft.tenantId !== current.tenantId || draft.appId !== current.appId;
 
@@ -921,11 +968,17 @@ function ScopeBar(props: {
             allowClear
           />
         ) : null}
-        <Input
-          style={{ width: 220 }}
+        <AutoComplete
+          style={{ width: 260 }}
           placeholder="应用作用域 X-App-ID（如 secret-service）"
           value={draft.appId}
-          onChange={(event) => onChange({ ...draft, appId: event.target.value })}
+          options={appOptions}
+          filterOption={(input, option) =>
+            String(option?.value ?? '')
+              .toLowerCase()
+              .includes(input.toLowerCase())
+          }
+          onChange={(value) => onChange({ ...draft, appId: value })}
           allowClear
         />
         <Button type="primary" size="small" disabled={!dirty || !draft.tenantId.trim()} loading={loading} onClick={onApply}>
@@ -1075,10 +1128,11 @@ function Overview(props: {
   policyError: string;
   encryptionKey: string;
   health: HealthState;
+  readOnly: boolean;
   onSavePolicy: (input: { auto_rotate_days?: number; notification_days_before?: number; max_versions?: number }) => void;
   onOpenSecrets: () => void;
 }) {
-  const { stats, total, policy, policyError, encryptionKey, health, onSavePolicy, onOpenSecrets } = props;
+  const { stats, total, policy, policyError, encryptionKey, health, readOnly, onSavePolicy, onOpenSecrets } = props;
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
 
@@ -1137,6 +1191,7 @@ function Overview(props: {
               <Button
                 size="small"
                 type="primary"
+                disabled={readOnly}
                 loading={saving}
                 onClick={() => {
                   setSaving(true);
@@ -1214,6 +1269,7 @@ function SecretsPage(props: {
   pageNo: number;
   pageSize: number;
   selectedKeys: string[];
+  readOnly: boolean;
   onPrefix: (value: string) => void;
   onSearch: () => void;
   onStatus: (value: string) => void;
@@ -1239,6 +1295,7 @@ function SecretsPage(props: {
     pageNo,
     pageSize,
     selectedKeys,
+    readOnly,
     onPrefix,
     onSearch,
     onStatus,
@@ -1276,18 +1333,25 @@ function SecretsPage(props: {
       width: 230,
       render: (_: unknown, row) => (
         <Space size={0} wrap>
-          <Button size="small" type="link" onClick={() => onRotate(row)} disabled={row.status === 'revoked'}>
-            轮换
+          <Button size="small" type="link" onClick={() => onView(row)}>
+            查看
           </Button>
-          <Button size="small" type="link" onClick={() => onEdit(row)}>
-            改描述
-          </Button>
-          <Button size="small" type="link" danger onClick={() => onRevoke(row)} disabled={row.status === 'revoked'}>
-            吊销
-          </Button>
-          <Button size="small" type="link" danger onClick={() => onDelete(row)}>
-            删除
-          </Button>
+          {readOnly ? null : (
+            <>
+              <Button size="small" type="link" onClick={() => onRotate(row)} disabled={row.status === 'revoked'}>
+                轮换
+              </Button>
+              <Button size="small" type="link" onClick={() => onEdit(row)}>
+                改描述
+              </Button>
+              <Button size="small" type="link" danger onClick={() => onRevoke(row)} disabled={row.status === 'revoked'}>
+                吊销
+              </Button>
+              <Button size="small" type="link" danger onClick={() => onDelete(row)}>
+                删除
+              </Button>
+            </>
+          )}
         </Space>
       ),
     },
@@ -1301,7 +1365,7 @@ function SecretsPage(props: {
           <p className="desc">元数据与版本；密钥值只写不读。服务密钥请切到 _system + 服务名。</p>
         </div>
         <Space>
-          {selectedKeys.length > 0 ? (
+          {!readOnly && selectedKeys.length > 0 ? (
             <>
               <Button danger onClick={onBatchRevoke}>
                 批量吊销（{selectedKeys.length}）
@@ -1311,9 +1375,13 @@ function SecretsPage(props: {
               </Button>
             </>
           ) : null}
-          <Button type="primary" onClick={onCreate}>
-            创建密钥
-          </Button>
+          {readOnly ? (
+            <Tag>只读角色：不可写</Tag>
+          ) : (
+            <Button type="primary" onClick={onCreate}>
+              创建密钥
+            </Button>
+          )}
         </Space>
       </div>
 
@@ -1367,10 +1435,14 @@ function SecretsPage(props: {
           dataSource={rows}
           columns={columns}
           loading={loading}
-          rowSelection={{
-            selectedRowKeys: selectedKeys,
-            onChange: (keys) => onSelected(keys.map(String)),
-          }}
+          rowSelection={
+            readOnly
+              ? undefined
+              : {
+                  selectedRowKeys: selectedKeys,
+                  onChange: (keys) => onSelected(keys.map(String)),
+                }
+          }
           pagination={{
             current: pageNo,
             pageSize,

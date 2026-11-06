@@ -21,8 +21,9 @@
 - 令牌存 `sessionStorage`；PKCE `S256` + `state` + `nonce`；不使用 `client_secret`。
 - 写操作可选「变更原因」：
   - 创建 / 改描述会写入 `metadata.change_reason`；
-  - 所有写操作同时发送 `X-Change-Reason` 头；
-  - 服务端把原因落进审计字段属**波 2 待办**（当前服务端未消费该头）。
+  - 所有写操作同时发送 `X-Change-Reason` 头，服务端写入审计 metadata；
+  - 长度上限 512 字符（服务端截断）。
+- 角色：`super_admin` / `admin` 可读写；`security_admin` 只读（读 `secret:read`、写 403）。令牌未带 roles 时按钮不隐藏，由服务端兜底。
 
 ## 运行
 
@@ -60,6 +61,7 @@ npm run preview
 |---|---|
 | 列表 | `GET /`（`prefix` / `status` / `page` / `page_size`） |
 | 详情 | `GET /detail?key=`（元数据 + 版本） |
+| 应用作用域枚举 | `GET /scopes`（租户下 app_id + 条目数） |
 | 创建 | `POST /` body `{key,value,description,expires_at,metadata}` |
 | 改元信息 | `POST /update?key=` |
 | 轮换 | `POST /rotate?key=` body `{value}` |
@@ -80,10 +82,9 @@ npm run preview
 
 ## 已知限制
 
-- **security_admin 只读不可用**：服务端读接口也要求 `secret:admin`，而 rbac seed 不给 security_admin 任何 `secret:*`；放开需改服务端读权限 + seed（波 2）。
-- **跨租户审计不可用**：审计查询把租户钉在 JWT 租户；跨租户写操作的审计归属由服务端记录（波 2）。
-- **无 app 作用域枚举**：服务端列表必须带精确 `app_id`；当前靠手填服务名（波 2 可加枚举接口）。
+- **跨租户审计不可用**：审计查询把租户钉在 JWT 租户；跨租户写操作的审计归属由服务端记录（待 audit-service 支持平台范围）。
 - **门户目录行**：`secret` 需在 `tenant_applications` 有 `type=portal/is_platform=true` 行，其它控制台的门户切换才会出现（波 3）。
+- **服务端版本**：`/scopes` 与 `secret:read` 读权限属 2026-11-06 波 2 改动，需部署 secret-service 后才生效；未部署时作用域选择器退化为手填。
 
 ## 部署
 

@@ -225,6 +225,13 @@ export function mockSession(): Session {
   };
 }
 
+/** 会话真实过期时间：优先 JWT exp（兼容旧存储里按 expires_in 估算的偏差）。 */
+function sessionExpiry(session: Session): number {
+  const claims = decodeJwtPayload(session.accessToken);
+  const exp = claims && typeof claims.exp === 'number' ? claims.exp * 1000 : 0;
+  return exp > 0 ? exp : session.expiresAt;
+}
+
 /** 当前会话（同步读）；过期返回 null。 */
 export function currentSession(): Session | null {
   if (AUTH_MODE === 'mock') {
@@ -236,7 +243,8 @@ export function currentSession(): Session | null {
   try {
     const session = JSON.parse(raw) as Session;
     if (!session?.accessToken) return null;
-    if (session.expiresAt > 0 && Date.now() > session.expiresAt - EXPIRY_SKEW_MS) return null;
+    const expiry = sessionExpiry(session);
+    if (expiry > 0 && Date.now() > expiry - EXPIRY_SKEW_MS) return null;
     return session;
   } catch {
     return null;
@@ -256,7 +264,8 @@ export async function restoreSession(): Promise<Session | null> {
     clearSession();
     return null;
   }
-  if (stored?.accessToken && (stored.expiresAt === 0 || Date.now() <= stored.expiresAt - EXPIRY_SKEW_MS)) {
+  const storedExpiry = stored?.accessToken ? sessionExpiry(stored) : 0;
+  if (stored?.accessToken && (storedExpiry === 0 || Date.now() <= storedExpiry - EXPIRY_SKEW_MS)) {
     return stored;
   }
   const refreshed = await refreshSession(stored);
@@ -462,7 +471,8 @@ export async function ensureFreshSession(): Promise<Session | null> {
     return null;
   }
   if (!stored?.accessToken) return null;
-  if (stored.expiresAt === 0 || stored.expiresAt - Date.now() > 5 * 60_000) return stored;
+  const expiry = sessionExpiry(stored);
+  if (expiry === 0 || expiry - Date.now() > 5 * 60_000) return stored;
   return refreshSession(stored);
 }
 

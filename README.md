@@ -18,7 +18,7 @@
 
 ## 安全口径
 
-- 密钥**值只写不读**：本仓不接入 `POST /versions/value`（明文读取接口）；列表与详情只返回元数据与版本号。
+- 密钥**明文默认不读**：列表与详情只返回元数据与版本号；查看明文需 `secret:admin` 权限、填写原因（写入审计 `version_read`），前端展示 30 秒后自动隐藏。
 - 令牌存 **localStorage**（与 platform/admin/security 一致：刷新、新标签、跨页保持登录；退出/失效即清）；
 PKCE `S256` + `state` + `nonce`；不使用 `client_secret`；剩余 < 5 分钟自动 refresh（单飞，401 亦会重试）；退出登录会调用 oauth `/revoke` 吊销 refresh/access token。
 - 写操作可选「变更原因」：

@@ -9,8 +9,8 @@
  * 鉴权：`Authorization: Bearer <JWT>` + `X-Tenant-ID` + `X-App-ID` + `X-Namespace`。
  * 作用域（tenant / app）来自 lib/scope.ts（用户可切换），不是写死的常量。
  *
- * 安全口径：本文件**不提供密钥明文读取**（`POST /versions/value` 未接入）。
- * 密钥值只写不读；列表/详情只返回元数据与版本号。
+ * 安全口径：列表/详情只返回元数据与版本号；明文读取走 `POST /versions/value`，
+ * 必须携带 `X-Change-Reason`（服务端写审计 `version_read`），前端只展示 30 秒。
  */
 import { currentSession, refreshSession } from './auth';
 import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE, IDENTITY_BASE, TENANT_BASE } from './config';
@@ -315,6 +315,25 @@ export async function rotateSecret(key: string, value: string, reason?: string, 
     scope,
   });
   return unwrap(res, '轮换');
+}
+
+export type SecretVersionValue = { key?: string; value?: string; version?: number; status?: string };
+
+/** 查看指定版本的明文（服务端 `secret:admin` + 审计 `version_read`；reason 走 X-Change-Reason）。 */
+export async function revealSecretVersion(
+  key: string,
+  version: number,
+  reason: string,
+  scope?: ScopeOverride,
+): Promise<SecretVersionValue> {
+  const res = await request<{ data?: SecretVersionValue }>(API_BASE, '/versions/value', {
+    method: 'POST',
+    query: { key },
+    body: { version },
+    changeReason: reason.trim(),
+    scope,
+  });
+  return unwrap(res, '查看明文');
 }
 
 /** 吊销：状态置 revoked，版本保留。 */

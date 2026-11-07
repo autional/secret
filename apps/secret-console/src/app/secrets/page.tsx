@@ -107,6 +107,13 @@ export default function SecretsPage() {
     void load();
   }, [load]);
 
+  // 明文只在页面上停留 30 秒（与 README 的安全口径一致），关闭抽屉时也清掉
+  useEffect(() => {
+    if (!revealed) return;
+    const timer = window.setTimeout(() => setRevealed(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [revealed]);
+
   useEffect(() => {
     if (DATA_MODE !== 'api') {
       const map = new Map<string, SecretScope>();

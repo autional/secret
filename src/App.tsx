@@ -49,9 +49,11 @@ import {
   getEncryptionKeys,
   getSecretDetail,
   getSecretPolicy,
+  getUser,
   listAllScopes,
   listAllSecrets,
   listAudit,
+  listTenants,
   revokeSecret,
   rotateSecret,
   updateSecretMeta,
@@ -243,6 +245,8 @@ function Console() {
   const [auditPage, setAuditPage] = useState(1);
   const [auditAction, setAuditAction] = useState('all');
   const [auditTenant, setAuditTenant] = useState('');
+  const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
 
   const needsLogin = !session && (REQUIRE_AUTH || DATA_MODE === 'api');
   const readOnly = useMemo(() => {
@@ -439,6 +443,49 @@ function Console() {
     void loadStats();
     void loadEncryptionKey();
   }, [authReady, session, loadScopes, loadStats, loadEncryptionKey]);
+
+  /* 审计展示：租户名（平台会话可见） */
+  useEffect(() => {
+    if (DATA_MODE !== 'api' || !session || !platformSession) return;
+    let alive = true;
+    void listTenants()
+      .then((rows) => {
+        if (!alive) return;
+        const map: Record<string, string> = { _system: '系统租户' };
+        for (const t of rows) map[t.id] = t.display_name || t.name || t.id;
+        setTenantNames(map);
+      })
+      .catch(() => {
+        /* 解析失败回退显示 ID */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session, platformSession]);
+
+  /* 审计展示：操作者名（按事件租户解析；失败再按平台租户，最后回退 ID） */
+  useEffect(() => {
+    if (!platformSession || !auditRows.length) return;
+    const missing = [...new Set(auditRows.map((r) => r.operator_id).filter((id): id is string => !!id))].filter(
+      (id) => !userNames[id],
+    );
+    if (!missing.length) return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const id of missing) {
+        const row = auditRows.find((r) => r.operator_id === id);
+        const tenantId = row?.tenant_id ?? '';
+        let user = tenantId ? await getUser(id, { tenantId }) : null;
+        if (!user) user = await getUser(id, { tenantId: PLATFORM_TENANT_ID });
+        if (user) next[id] = user.username || user.email || id;
+      }
+      if (alive && Object.keys(next).length) setUserNames((prev) => ({ ...prev, ...next }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [auditRows, platformSession, userNames]);
 
   /* 列表 / 策略 */
   useEffect(() => {
@@ -890,6 +937,8 @@ function Console() {
             platform={platformSession}
             tenantId={auditTenant}
             tenantOptions={tenantOptions}
+            tenantNames={tenantNames}
+            userNames={userNames}
             onTenant={(value) => {
               setAuditTenant(value);
               setAuditPage(1);
@@ -1711,12 +1760,30 @@ function AuditPage(props: {
   platform: boolean;
   tenantId: string;
   tenantOptions: { value: string; label: string }[];
+  tenantNames: Record<string, string>;
+  userNames: Record<string, string>;
   onTenant: (value: string) => void;
   onAction: (value: string) => void;
   onPage: (page: number) => void;
   onReload: () => void;
 }) {
-  const { rows, total, loading, error, pageNo, action, platform, tenantId, tenantOptions, onTenant, onAction, onPage, onReload } = props;
+  const {
+    rows,
+    total,
+    loading,
+    error,
+    pageNo,
+    action,
+    platform,
+    tenantId,
+    tenantOptions,
+    tenantNames,
+    userNames,
+    onTenant,
+    onAction,
+    onPage,
+    onReload,
+  } = props;
 
   return (
     <>
@@ -1787,8 +1854,42 @@ function AuditPage(props: {
           locale={{ emptyText: <Empty description="没有匹配的审计事件" /> }}
           columns={[
             { title: '时间', dataIndex: 'timestamp', width: 180, render: (value?: number) => fmtTime(value) },
-            { title: '租户', dataIndex: 'tenant_id', width: 220, ellipsis: true, render: (value?: string) => <code className="mono small">{value || '—'}</code> },
-            { title: '操作者', dataIndex: 'operator_id', width: 200, ellipsis: true, render: (value?: string) => value || '—' },
+            {
+              title: '租户',
+              dataIndex: 'tenant_id',
+              width: 230,
+              ellipsis: true,
+              render: (value?: string) => {
+                if (!value) return '—';
+                const name = tenantNames[value];
+                return (
+                  <Tooltip title={value}>
+                    <span>
+                      {name || <code className="mono small">{value}</code>}
+                      {name ? <div className="hint mono small">{value}</div> : null}
+                    </span>
+                  </Tooltip>
+                );
+              },
+            },
+            {
+              title: '操作者',
+              dataIndex: 'operator_id',
+              width: 220,
+              ellipsis: true,
+              render: (value?: string) => {
+                if (!value) return 'system';
+                const name = userNames[value];
+                return (
+                  <Tooltip title={value}>
+                    <span>
+                      {name || <code className="mono small">{value}</code>}
+                      {name ? <div className="hint mono small">{value}</div> : null}
+                    </span>
+                  </Tooltip>
+                );
+              },
+            },
             {
               title: '动作',
               dataIndex: 'action',

@@ -13,7 +13,7 @@
  * 密钥值只写不读；列表/详情只返回元数据与版本号。
  */
 import { currentSession, refreshSession } from './auth';
-import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE } from './config';
+import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE, IDENTITY_BASE, TENANT_BASE } from './config';
 import { resolveScope } from './scope';
 
 /** 管理面错误（统一携带 HTTP 状态与业务错误码，便于 UI 分流 401/403/503/400）。 */
@@ -384,6 +384,31 @@ export async function getEncryptionKeys(): Promise<{ current: string; available:
     .map((item) => String(item.keyId ?? item.key_id ?? ''))
     .filter((id): id is string => id !== '');
   return { current: String(data.current ?? available[0] ?? ''), available };
+}
+
+
+/* --------------------------- 名称解析（审计展示） --------------------------- */
+
+export type TenantItem = { id: string; name: string; display_name?: string };
+
+/** 平台租户列表（仅平台会话可用；用于审计租户名展示）。 */
+export async function listTenants(): Promise<TenantItem[]> {
+  const res = await request<{ items?: TenantItem[] }>(TENANT_BASE, '/tenants', {
+    query: { page: 1, page_size: 200 },
+  });
+  return Array.isArray(res?.items) ? res.items : [];
+}
+
+export type UserItem = { id: string; username?: string; email?: string };
+
+/** 用户详情（按数据租户解析；失败返回 null，UI 回退显示 ID）。 */
+export async function getUser(userId: string, scope?: ScopeOverride): Promise<UserItem | null> {
+  try {
+    const res = await request<{ data?: UserItem }>(IDENTITY_BASE, `/users/${encodeURIComponent(userId)}`, { scope });
+    return res?.data ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /* -------------------------------- 审计 -------------------------------- */

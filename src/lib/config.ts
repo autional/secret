@@ -49,6 +49,9 @@ export const AUDIT_BASE = str('VITE_AUDIT_BASE', '/bff/audit/api/v1/admin/audit'
 /** 租户服务管理面（门户目录）。 */
 export const TENANT_BASE = str('VITE_TENANT_BASE', '/bff/tenant/api/v1/admin').replace(/\/+$/, '');
 
+/** 身份服务管理面（审计操作者姓名解析）。 */
+export const IDENTITY_BASE = str('VITE_IDENTITY_BASE', '/bff/identity/api/v1/admin').replace(/\/+$/, '');
+
 /**
  * 密钥服务要求 X-Namespace，值必须 ∈ 实例 `SECRET_NAMESPACES`，否则 **400**（fail-closed）。
  * 该维度已从数据模型移除（只做门禁，不分区数据）。

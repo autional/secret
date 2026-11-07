@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { AppPageHeader, SectionCard } from '@autional/ui';
 import { DataTable, Drawer } from '@autional/ui/antd';
 import { DATA_MODE } from '@/lib/config';
+import { useSession } from '@/hooks/use-session';
 import {
   batchDeleteSecrets,
   batchRevokeSecrets,
@@ -42,6 +43,7 @@ export default function SecretsPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { session } = useSession();
 
   const [rows, setRows] = useState<SecretItem[]>(DATA_MODE === 'api' ? [] : MOCK_SECRETS);
   const [total, setTotal] = useState(DATA_MODE === 'api' ? 0 : MOCK_SECRETS.length);
@@ -238,7 +240,13 @@ export default function SecretsPage() {
     return t('secrets.revealTitle');
   })();
 
-  const canWrite = DATA_MODE === 'api';
+  // security_admin（且非 super_admin/admin）只读：界面不给写入口，服务端仍兜底 403
+  const readOnly = useMemo(() => {
+    const roles = session?.user.roles ?? [];
+    if (roles.length === 0) return false;
+    return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
+  }, [session]);
+  const canWrite = DATA_MODE === 'api' && !readOnly;
 
   return (
     <>

@@ -394,12 +394,22 @@ export type TenantItem = { id: string; name: string; display_name?: string };
 /** 平台租户列表（仅平台会话可用；用于审计租户名展示）。 */
 export async function listTenants(): Promise<TenantItem[]> {
   const res = await request<{ items?: TenantItem[] }>(TENANT_BASE, '/tenants', {
-    query: { page: 1, page_size: 200 },
+    query: { page: 1, page_size: 100 },
   });
   return Array.isArray(res?.items) ? res.items : [];
 }
 
 export type UserItem = { id: string; username?: string; email?: string };
+
+/** 单个租户详情（名称解析兜底：列表未覆盖时按 ID 取）。 */
+export async function getTenant(tenantId: string): Promise<TenantItem | null> {
+  try {
+    const res = await request<{ data?: TenantItem }>(TENANT_BASE, `/tenants/${encodeURIComponent(tenantId)}`);
+    return res?.data ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** 用户详情（按数据租户解析；失败返回 null，UI 回退显示 ID）。 */
 export async function getUser(userId: string, scope?: ScopeOverride): Promise<UserItem | null> {

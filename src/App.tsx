@@ -49,6 +49,7 @@ import {
   getEncryptionKeys,
   getSecretDetail,
   getSecretPolicy,
+  getTenant,
   getUser,
   listAllScopes,
   listAllSecrets,
@@ -462,6 +463,27 @@ function Console() {
       alive = false;
     };
   }, [session, platformSession]);
+
+  /* 审计展示：租户名兜底（列表最多 100 条；按事件租户补查） */
+  useEffect(() => {
+    if (!platformSession || !auditRows.length) return;
+    const missing = [...new Set(auditRows.map((r) => r.tenant_id).filter((id): id is string => !!id))].filter(
+      (id) => id !== '_system' && !tenantNames[id],
+    );
+    if (!missing.length) return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const id of missing) {
+        const tenant = await getTenant(id);
+        if (tenant) next[id] = tenant.display_name || tenant.name || id;
+      }
+      if (alive && Object.keys(next).length) setTenantNames((prev) => ({ ...prev, ...next }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [auditRows, platformSession, tenantNames]);
 
   /* 审计展示：操作者名（按事件租户解析；失败再按平台租户，最后回退 ID） */
   useEffect(() => {

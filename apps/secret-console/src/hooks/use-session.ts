@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { AUTH_MODE, DATA_MODE, REQUIRE_AUTH, isCallbackPath } from '@/lib/config';
-import { completeLogin, restoreSession, signOut, startLogin } from '@/lib/auth';
+import { SESSION_STORAGE_KEY, completeLogin, ensureFreshSession, restoreSession, signOut, startLogin } from '@/lib/auth';
 import type { Session } from '@/lib/auth';
 import { UNAUTHORIZED_EVENT } from '@/lib/api';
 
@@ -55,6 +55,49 @@ export function useSession() {
       alive = false;
     };
   }, [navigate]);
+
+  // 主动续期：剩余 < 5 分钟时刷新；页面重新可见时也检查一次（与旧版一致）
+  useEffect(() => {
+    if (!session || AUTH_MODE === 'mock') return;
+    let alive = true;
+    const tick = async () => {
+      const next = await ensureFreshSession();
+      if (!alive) return;
+      if (!next) {
+        setSession(null);
+        return;
+      }
+      setSession((prev) => (prev && prev.accessToken === next.accessToken ? prev : next));
+    };
+    const timer = window.setInterval(() => void tick(), 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [session?.accessToken]);
+
+  // 跨标签同步：其它标签登录/退出时同步本标签
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SESSION_STORAGE_KEY) return;
+      if (!event.newValue) {
+        setSession(null);
+        return;
+      }
+      try {
+        setSession(JSON.parse(event.newValue) as Session);
+      } catch {
+        /* 忽略损坏值 */
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // 令牌失效（401）：清会话，回到登录态
   useEffect(() => {

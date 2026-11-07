@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Input, Popconfirm, Select, Space, Tag, Typography } from 'antd';
+import { Alert, App, Button, Empty, Input, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader } from '@autional/ui';
-import { PageSection } from '@/components/page-section';
-import { DataTable, Drawer } from '@autional/ui/antd';
-import { DATA_MODE } from '@/lib/config';
-import { useSession } from '@/hooks/use-session';
+import { DataTable, Drawer, Modal } from '@autional/ui/antd';
+import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import {
   batchDeleteSecrets,
   batchRevokeSecrets,
@@ -16,35 +14,35 @@ import {
   getSecretDetail,
   listAllScopes,
   listAllSecrets,
+  revealSecretVersion,
   revokeSecret,
   rotateSecret,
   updateSecretMeta,
-  revealSecretVersion,
 } from '@/lib/api';
 import type { SecretDetail, SecretItem, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
-import { ReasonModal } from '@/components/reason-modal';
-import { SecretFormModal } from '@/components/secret-form-modal';
-import type { SecretFormMode, SecretFormValues } from '@/components/secret-form-modal';
+import { useSession } from '@/hooks/use-session';
+import { SecretWriteDialog } from '@/components/secret-write-dialog';
+import type { WriteState, WriteValues } from '@/components/secret-write-dialog';
+import { PageSection } from '@/components/page-section';
+
+const PAGE_SIZES = [10, 20, 50, 100];
+const DEFAULT_PAGE_SIZE = 20;
 
 const STATUS_COLOR: Record<string, string> = { active: 'green', expired: 'orange', revoked: 'red' };
-const PAGE_SIZE = 20;
 
-type PendingAction =
-  | { kind: 'create'; values: SecretFormValues }
-  | { kind: 'rotate'; row: SecretItem; values: SecretFormValues }
-  | { kind: 'edit'; row: SecretItem; values: SecretFormValues }
-  | { kind: 'revoke'; row: SecretItem }
-  | { kind: 'delete'; row: SecretItem }
-  | { kind: 'batchRevoke'; keys: string[] }
-  | { kind: 'batchDelete'; keys: string[] }
-  | { kind: 'reveal'; row: SecretItem; version: number };
+function fmtTime(value?: string | number | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
 
 export default function SecretsPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useSession();
+  const [searchParams] = useSearchParams();
 
   const [rows, setRows] = useState<SecretItem[]>(DATA_MODE === 'api' ? [] : MOCK_SECRETS);
   const [total, setTotal] = useState(DATA_MODE === 'api' ? 0 : MOCK_SECRETS.length);
@@ -57,17 +55,25 @@ export default function SecretsPage() {
   const [prefix, setPrefix] = useState('');
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [selected, setSelected] = useState<string[]>([]);
 
   const [detail, setDetail] = useState<SecretDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-
-  const [formMode, setFormMode] = useState<SecretFormMode | null>(null);
-  const [formRow, setFormRow] = useState<SecretItem | null>(null);
-  const [pending, setPending] = useState<PendingAction | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [write, setWrite] = useState<WriteState | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [revealed, setRevealed] = useState<{ key: string; version: number; value: string } | null>(null);
   const [revealError, setRevealError] = useState('');
+  const [revealFor, setRevealFor] = useState<{ row: SecretDetail; version: number } | null>(null);
+  const [revealReason, setRevealReason] = useState('');
+
+  // security_admin（且非 super_admin / admin）只读：界面不给写入口，服务端仍兜底 403
+  const readOnly = useMemo(() => {
+    const roles = session?.user.roles ?? [];
+    if (roles.length === 0) return false;
+    return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
+  }, [session]);
+  const canWrite = DATA_MODE === 'api' && !readOnly;
 
   const load = useCallback(async () => {
     if (DATA_MODE !== 'api') {
@@ -92,7 +98,7 @@ export default function SecretsPage() {
         prefix: prefix || undefined,
         status: status === 'all' ? undefined : status,
         page,
-        page_size: PAGE_SIZE,
+        page_size: pageSize,
       });
       setRows(res.items);
       setTotal(res.total);
@@ -104,18 +110,11 @@ export default function SecretsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tenant, appId, prefix, status, page]);
+  }, [tenant, appId, prefix, status, page, pageSize]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  // 明文只在页面上停留 30 秒（与 README 的安全口径一致），关闭抽屉时也清掉
-  useEffect(() => {
-    if (!revealed) return;
-    const timer = window.setTimeout(() => setRevealed(null), 30_000);
-    return () => window.clearTimeout(timer);
-  }, [revealed]);
 
   useEffect(() => {
     if (DATA_MODE !== 'api') {
@@ -136,13 +135,15 @@ export default function SecretsPage() {
 
   const tenantOptions = useMemo(() => {
     const set = new Set(scopes.map((row) => row.tenant_id || '_system'));
+    set.add(PLATFORM_TENANT_ID);
+    set.add('_system');
     return [...set].sort().map((value) => ({ value, label: value }));
   }, [scopes]);
 
   const appOptions = useMemo(() => {
     const set = new Set(scopes.filter((row) => !tenant || row.tenant_id === tenant).map((row) => row.app_id || ''));
-    return [...set].sort().map((value) => ({ value, label: value || t('secrets.emptyApp') }));
-  }, [scopes, tenant, t]);
+    return [...set].filter(Boolean).sort().map((value) => ({ value, label: value }));
+  }, [scopes, tenant]);
 
   const openDetail = useCallback(
     async (key: string) => {
@@ -171,83 +172,77 @@ export default function SecretsPage() {
     if (key) void openDetail(key);
   }, [searchParams, openDetail]);
 
-  const submitForm = (values: SecretFormValues) => {
-    const mode = formMode;
-    const row = formRow;
-    setFormMode(null);
-    if (!mode) return;
-    if (mode === 'create') setPending({ kind: 'create', values });
-    else if (mode === 'rotate' && row) setPending({ kind: 'rotate', row, values });
-    else if (mode === 'edit' && row) setPending({ kind: 'edit', row, values });
-  };
+  // 明文只在页面上停留 30 秒（与安全口径一致），关闭抽屉时也清掉
+  useEffect(() => {
+    if (!revealed) return;
+    const timer = window.setTimeout(() => setRevealed(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [revealed]);
 
   const scopeOf = (row: SecretItem) => ({ tenantId: row.tenant_id || '', appId: row.app_id || undefined });
 
-  const runPending = async (reason: string) => {
-    if (!pending) return;
-    setBusy(true);
+  const submitWrite = async (values: WriteValues) => {
+    if (!write) return;
+    const reason = String(values.reason ?? '').trim();
+    setSubmitting(true);
     try {
-      if (pending.kind === 'create') {
+      if (write.mode === 'create') {
+        const rawExpiry = String(values.expires_at ?? '').trim();
+        const expiresAt = /^\d{4}-\d{2}-\d{2}$/.test(rawExpiry) ? `${rawExpiry}T00:00:00Z` : rawExpiry;
         await createSecret(
-          { key: String(pending.values.key).trim(), value: String(pending.values.value ?? ''), description: pending.values.description },
-          tenant ? { tenantId: tenant, appId: appId || undefined } : undefined,
+          {
+            key: String(values.key ?? '').trim(),
+            value: String(values.value ?? ''),
+            description: String(values.description ?? '').trim() || undefined,
+            expires_at: expiresAt || undefined,
+            reason,
+          },
+          { tenantId: String(values.tenant_id ?? '').trim(), appId: String(values.app_id ?? '').trim() || undefined },
         );
         message.success(t('secrets.created'));
-      } else if (pending.kind === 'rotate') {
-        await rotateSecret(pending.row.key, String(pending.values.value ?? ''), reason, scopeOf(pending.row));
-        message.success(t('secrets.rotated'));
-      } else if (pending.kind === 'edit') {
-        await updateSecretMeta(pending.row.key, { description: pending.values.description ?? '', reason }, scopeOf(pending.row));
+      } else if (write.mode === 'edit' && write.row) {
+        await updateSecretMeta(write.row.key, { description: String(values.description ?? ''), reason }, scopeOf(write.row));
         message.success(t('secrets.updated'));
-      } else if (pending.kind === 'revoke') {
-        await revokeSecret(pending.row.key, reason, scopeOf(pending.row));
+      } else if (write.mode === 'rotate' && write.row) {
+        await rotateSecret(write.row.key, String(values.value ?? ''), reason, scopeOf(write.row));
+        message.success(t('secrets.rotated'));
+      } else if (write.mode === 'revoke' && write.row) {
+        await revokeSecret(write.row.key, reason, scopeOf(write.row));
         message.success(t('secrets.revoked'));
-      } else if (pending.kind === 'delete') {
-        await deleteSecret(pending.row.key, reason, scopeOf(pending.row));
+      } else if (write.mode === 'delete' && write.row) {
+        await deleteSecret(write.row.key, reason, scopeOf(write.row));
         message.success(t('secrets.deleted'));
-      } else if (pending.kind === 'batchRevoke') {
-        const res = await batchRevokeSecrets(pending.keys, reason);
+      } else if (write.mode === 'batch-revoke' && write.keys) {
+        const res = await batchRevokeSecrets(write.keys, reason);
         message.success(t('secrets.batchDone', { ok: res.succeeded?.length ?? 0, failed: res.errors?.length ?? 0 }));
-      } else if (pending.kind === 'batchDelete') {
-        const res = await batchDeleteSecrets(pending.keys, reason);
+      } else if (write.mode === 'batch-delete' && write.keys) {
+        const res = await batchDeleteSecrets(write.keys, reason);
         message.success(t('secrets.batchDone', { ok: res.succeeded?.length ?? 0, failed: res.errors?.length ?? 0 }));
-      } else if (pending.kind === 'reveal') {
-        const res = await revealSecretVersion(pending.row.key, pending.version, reason, scopeOf(pending.row));
-        setRevealed({ key: pending.row.key, version: pending.version, value: res.value ?? '' });
       }
-      setPending(null);
-      if (pending.kind === 'reveal') return;
+      setWrite(null);
       if (detail) void openDetail(detail.key);
       await load();
     } catch (err) {
-      const text = err instanceof Error ? err.message : String(err);
-      if (pending.kind === 'reveal') setRevealError(text);
-      else message.error(text);
-      if (pending.kind !== 'reveal') setPending(null);
+      message.error(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
   };
 
-  const pendingTitle = (() => {
-    if (!pending) return '';
-    if (pending.kind === 'create') return t('secrets.createTitle');
-    if (pending.kind === 'rotate') return t('secrets.rotateTitle');
-    if (pending.kind === 'edit') return t('secrets.editTitle');
-    if (pending.kind === 'revoke') return t('secrets.revokeTitle');
-    if (pending.kind === 'delete') return t('secrets.deleteTitle');
-    if (pending.kind === 'batchRevoke') return t('secrets.batchRevoke');
-    if (pending.kind === 'batchDelete') return t('secrets.batchDelete');
-    return t('secrets.revealTitle');
-  })();
-
-  // security_admin（且非 super_admin/admin）只读：界面不给写入口，服务端仍兜底 403
-  const readOnly = useMemo(() => {
-    const roles = session?.user.roles ?? [];
-    if (roles.length === 0) return false;
-    return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
-  }, [session]);
-  const canWrite = DATA_MODE === 'api' && !readOnly;
+  const revealVersion = async (row: SecretDetail, version: number, reason: string) => {
+    setRevealError('');
+    try {
+      const res = await revealSecretVersion(row.key, version, reason, {
+        tenantId: row.tenant_id || '',
+        appId: row.app_id || undefined,
+      });
+      setRevealed({ key: row.key, version, value: res.value ?? '' });
+      setRevealFor(null);
+      setRevealReason('');
+    } catch (err) {
+      setRevealError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
     <>
@@ -255,30 +250,54 @@ export default function SecretsPage() {
         title={t('secrets.title')}
         description={t('secrets.description')}
         actions={
-          <Button type="primary" icon={<Plus size={14} />} disabled={!canWrite} onClick={() => { setFormRow(null); setFormMode('create'); }}>
-            {t('secrets.create')}
-          </Button>
+          <Space size={8} wrap>
+            {readOnly ? <Tag>{t('header.readOnly')}</Tag> : null}
+            {!readOnly && selected.length > 0 ? (
+              <>
+                <Button danger onClick={() => setWrite({ mode: 'batch-revoke', keys: selected })}>
+                  {t('secrets.batchRevokeCount', { count: selected.length })}
+                </Button>
+                <Button danger onClick={() => setWrite({ mode: 'batch-delete', keys: selected })}>
+                  {t('secrets.batchDeleteCount', { count: selected.length })}
+                </Button>
+              </>
+            ) : null}
+            {readOnly ? null : (
+              <Button type="primary" icon={<Plus size={14} />} disabled={!canWrite} onClick={() => setWrite({ mode: 'create' })}>
+                {t('secrets.create')}
+              </Button>
+            )}
+          </Space>
         }
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select
-          className="w-52"
+          className="w-64"
+          allowClear
+          showSearch
           value={tenant || undefined}
           onChange={(value) => { setTenant(value ?? ''); setPage(1); }}
-          allowClear
           placeholder={t('secrets.filterTenant')}
           options={tenantOptions}
+          optionFilterProp="label"
         />
         <Select
-          className="w-48"
+          className="w-56"
+          allowClear
+          showSearch
           value={appId || undefined}
           onChange={(value) => { setAppId(value ?? ''); setPage(1); }}
-          allowClear
           placeholder={t('secrets.filterApp')}
           options={appOptions}
+          optionFilterProp="label"
         />
-        <Input.Search className="w-64" allowClear placeholder={t('secrets.filterPrefix')} onSearch={(value) => { setPrefix(value.trim()); setPage(1); }} />
+        <Input.Search
+          className="w-64"
+          allowClear
+          placeholder={t('secrets.filterPrefix')}
+          onSearch={(value) => { setPrefix(value.trim()); setPage(1); }}
+        />
         <Select
           className="w-36"
           value={status}
@@ -291,96 +310,176 @@ export default function SecretsPage() {
           ]}
         />
         <div className="flex-1" />
-        {selected.length ? (
-          <Space size={8}>
-            <span className="text-sm text-[var(--color-text-secondary)]">{t('secrets.selected', { count: selected.length })}</span>
-            <Button size="small" disabled={!canWrite} onClick={() => setPending({ kind: 'batchRevoke', keys: selected })}>
-              {t('secrets.batchRevoke')}
-            </Button>
-            <Button size="small" danger disabled={!canWrite} onClick={() => setPending({ kind: 'batchDelete', keys: selected })}>
-              {t('secrets.batchDelete')}
-            </Button>
-          </Space>
-        ) : null}
+        {loading ? <Spin size="small" /> : null}
+        <Button size="small" onClick={() => void load()} loading={loading}>
+          {t('common.refresh')}
+        </Button>
       </div>
 
-      {!canWrite ? <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} /> : null}
-      {error ? <Alert className="mb-3" type="error" showIcon title={error} /> : null}
+      {!canWrite && DATA_MODE !== 'api' ? <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} /> : null}
+      {error ? (
+        <Alert
+          className="mb-3"
+          type="error"
+          showIcon
+          title={t('secrets.listError')}
+          description={error}
+          action={<Button size="small" onClick={() => void load()}>{t('common.retry')}</Button>}
+        />
+      ) : null}
 
-      <PageSection >
+      <PageSection>
         <DataTable
           size="small"
-          rowKey="id"
-          loading={loading}
+          rowKey={(row) => `${row.tenant_id ?? ''}/${row.app_id ?? ''}/${row.key}`}
           dataSource={rows}
-          scroll={{ x: 1100 }}
-          rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]) }}
-          pagination={{ current: page, pageSize: PAGE_SIZE, total, showSizeChanger: false, onChange: setPage }}
-          onRow={(row) => ({ onClick: () => void openDetail(row.key), style: { cursor: 'pointer' } })}
+          loading={loading}
+          scroll={{ x: 1280 }}
+          rowSelection={readOnly ? undefined : { selectedRowKeys: selected, onChange: (keys) => setSelected(keys.map(String)) }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: PAGE_SIZES,
+            showTotal: (count) => t('secrets.total', { count }),
+            onChange: (next, size) => {
+              setPage(next);
+              setPageSize(size);
+            },
+          }}
+          locale={{ emptyText: <Empty description={total === 0 ? t('secrets.emptyAll') : t('secrets.emptyFiltered')} /> }}
           columns={[
-            { title: t('secrets.col.key'), dataIndex: 'key', render: (value: string) => <code className="font-mono text-xs">{value}</code> },
-            { title: t('secrets.col.tenant'), dataIndex: 'tenant_id', width: 200, render: (value: string) => <span className="font-mono text-xs">{value || '—'}</span> },
-            { title: t('secrets.col.app'), dataIndex: 'app_id', width: 170, render: (value: string) => value || '—' },
-            { title: t('secrets.col.version'), dataIndex: 'version', width: 80 },
+            {
+              title: t('secrets.col.key'),
+              dataIndex: 'key',
+              width: '24%',
+              render: (value: string, row: SecretItem) => (
+                <Button type="link" size="small" onClick={() => void openDetail(row.key)}>
+                  <code className="font-mono text-xs">{value}</code>
+                </Button>
+              ),
+            },
+            {
+              title: t('secrets.col.tenant'),
+              dataIndex: 'tenant_id',
+              width: 230,
+              ellipsis: true,
+              render: (value?: string) => <code className="font-mono text-xs">{value || '—'}</code>,
+            },
+            {
+              title: t('secrets.col.app'),
+              dataIndex: 'app_id',
+              width: 170,
+              ellipsis: true,
+              render: (value?: string) => (value ? <Tag>{value}</Tag> : <Typography.Text type="secondary">{t('secrets.emptyApp')}</Typography.Text>),
+            },
             {
               title: t('secrets.col.status'),
               dataIndex: 'status',
-              width: 110,
-              render: (value: string) => <Tag color={STATUS_COLOR[value ?? ''] ?? 'default'}>{t(`secrets.status.${value}`)}</Tag>,
+              width: 90,
+              render: (value?: string) => <Tag color={STATUS_COLOR[value ?? ''] ?? 'default'}>{t(`secrets.status.${value ?? 'unknown'}`)}</Tag>,
             },
-            { title: t('secrets.col.updated'), dataIndex: 'updated_at', width: 180, render: (value: string) => (value ? new Date(value).toLocaleString() : '—') },
+            {
+              title: t('secrets.col.version'),
+              dataIndex: 'version',
+              width: 80,
+              render: (value?: number) => (value ? `v${value}` : '—'),
+            },
+            { title: t('secrets.col.updated'), dataIndex: 'updated_at', width: 170, render: (value?: string) => fmtTime(value) },
+            {
+              title: t('secrets.col.actions'),
+              width: 260,
+              render: (_: unknown, row: SecretItem) => (
+                <Space size={0} wrap>
+                  <Button size="small" type="link" onClick={() => void openDetail(row.key)}>
+                    {t('common.view')}
+                  </Button>
+                  {readOnly ? null : (
+                    <>
+                      <Button size="small" type="link" disabled={!canWrite || row.status === 'revoked'} onClick={() => setWrite({ mode: 'rotate', row })}>
+                        {t('secrets.rotate')}
+                      </Button>
+                      <Button size="small" type="link" disabled={!canWrite} onClick={() => setWrite({ mode: 'edit', row })}>
+                        {t('secrets.editDescription')}
+                      </Button>
+                      <Button size="small" type="link" danger disabled={!canWrite || row.status === 'revoked'} onClick={() => setWrite({ mode: 'revoke', row })}>
+                        {t('secrets.revoke')}
+                      </Button>
+                      <Button size="small" type="link" danger disabled={!canWrite} onClick={() => setWrite({ mode: 'delete', row })}>
+                        {t('common.delete')}
+                      </Button>
+                    </>
+                  )}
+                </Space>
+              ),
+            },
           ]}
         />
       </PageSection>
 
-      <Drawer open={!!detail} onClose={() => setDetail(null)} size="lg" title={detail?.key} loading={detailLoading}>
+      <Drawer
+        open={!!detail}
+        onClose={() => {
+          setDetail(null);
+          setRevealed(null);
+          setRevealError('');
+        }}
+        size="lg"
+        title={detail?.key}
+        loading={detailLoading}
+        extra={
+          detail && !readOnly ? (
+            <Space size={0} wrap>
+              <Button size="small" type="link" disabled={!canWrite || detail.status === 'revoked'} onClick={() => setWrite({ mode: 'rotate', row: detail })}>
+                {t('secrets.rotate')}
+              </Button>
+              <Button size="small" type="link" disabled={!canWrite} onClick={() => setWrite({ mode: 'edit', row: detail })}>
+                {t('secrets.editDescription')}
+              </Button>
+              <Button size="small" type="link" danger disabled={!canWrite || detail.status === 'revoked'} onClick={() => setWrite({ mode: 'revoke', row: detail })}>
+                {t('secrets.revoke')}
+              </Button>
+              <Button size="small" type="link" danger disabled={!canWrite} onClick={() => setWrite({ mode: 'delete', row: detail })}>
+                {t('common.delete')}
+              </Button>
+            </Space>
+          ) : null
+        }
+      >
         {detail ? (
           <div className="space-y-4 text-sm">
             <div className="grid grid-cols-2 gap-3">
-              <div><Typography.Text type="secondary">{t('secrets.col.tenant')}</Typography.Text><div className="font-mono text-xs">{detail.tenant_id || '—'}</div></div>
-              <div><Typography.Text type="secondary">{t('secrets.col.app')}</Typography.Text><div>{detail.app_id || '—'}</div></div>
-              <div><Typography.Text type="secondary">{t('secrets.col.status')}</Typography.Text><div><Tag color={STATUS_COLOR[detail.status ?? ''] ?? 'default'}>{t(`secrets.status.${detail.status}`)}</Tag></div></div>
-              <div><Typography.Text type="secondary">{t('secrets.col.version')}</Typography.Text><div>{detail.version}</div></div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.col.tenant')}</Typography.Text>
+                <div className="font-mono text-xs">{detail.tenant_id || '—'}</div>
+              </div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.col.app')}</Typography.Text>
+                <div>{detail.app_id || t('secrets.globalRow')}</div>
+              </div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.col.status')}</Typography.Text>
+                <div>
+                  <Tag color={STATUS_COLOR[detail.status ?? ''] ?? 'default'}>{t(`secrets.status.${detail.status ?? 'unknown'}`)}</Tag>
+                </div>
+              </div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.col.version')}</Typography.Text>
+                <div>v{detail.version ?? '—'}</div>
+              </div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.col.updated')}</Typography.Text>
+                <div>{fmtTime(detail.updated_at)}</div>
+              </div>
+              <div>
+                <Typography.Text type="secondary">{t('secrets.expiresAt')}</Typography.Text>
+                <div>{fmtTime(detail.expires_at)}</div>
+              </div>
             </div>
             <div>
               <Typography.Text type="secondary">{t('secrets.col.description')}</Typography.Text>
               <div>{detail.description || '—'}</div>
-            </div>
-
-            <Space size={8} wrap>
-              <Button size="small" disabled={!canWrite} onClick={() => { setFormRow(detail); setFormMode('rotate'); }}>{t('secrets.rotate')}</Button>
-              <Button size="small" disabled={!canWrite} onClick={() => { setFormRow(detail); setFormMode('edit'); }}>{t('secrets.editDescription')}</Button>
-              <Popconfirm title={t('secrets.revokeConfirm')} onConfirm={() => setPending({ kind: 'revoke', row: detail })}>
-                <Button size="small" disabled={!canWrite}>{t('secrets.revoke')}</Button>
-              </Popconfirm>
-              <Popconfirm title={t('secrets.deleteConfirm')} onConfirm={() => setPending({ kind: 'delete', row: detail })}>
-                <Button size="small" danger disabled={!canWrite}>{t('common.delete')}</Button>
-              </Popconfirm>
-            </Space>
-
-            <div>
-              <div className="mb-2 font-semibold">{t('secrets.versions')}</div>
-              <DataTable
-                size="small"
-                rowKey={(row) => String(row.version)}
-                dataSource={detail.versions ?? []}
-                pagination={false}
-                locale={{ emptyText: t('secrets.noVersions') }}
-                columns={[
-                  { title: t('secrets.col.version'), dataIndex: 'version', width: 90 },
-                  { title: t('secrets.col.status'), dataIndex: 'status', width: 110, render: (value: string) => <Tag color={STATUS_COLOR[value ?? ''] ?? 'default'}>{value || '—'}</Tag> },
-                  { title: t('secrets.col.createdAt'), dataIndex: 'created_at', width: 180, render: (value: string) => (value ? new Date(value).toLocaleString() : '—') },
-                  {
-                    title: '',
-                    width: 100,
-                    render: (_: unknown, row: { version: number }) => (
-                      <Button size="small" type="link" disabled={!canWrite} onClick={() => setPending({ kind: 'reveal', row: detail, version: row.version })}>
-                        {t('secrets.reveal')}
-                      </Button>
-                    ),
-                  },
-                ]}
-              />
             </div>
 
             {revealed ? (
@@ -392,31 +491,74 @@ export default function SecretsPage() {
               />
             ) : null}
             {revealError ? <Alert type="error" showIcon title={revealError} /> : null}
+
+            <div>
+              <div className="mb-2 font-semibold">{t('secrets.versions')}</div>
+              {(detail.versions ?? []).length === 0 ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('secrets.noVersions')} />
+              ) : (
+                <DataTable
+                  size="small"
+                  rowKey={(row) => String(row.version)}
+                  dataSource={detail.versions ?? []}
+                  pagination={false}
+                  columns={[
+                    { title: t('secrets.col.version'), dataIndex: 'version', width: 90, render: (value: number) => `v${value}` },
+                    { title: t('secrets.col.creator'), dataIndex: 'created_by', render: (value?: string) => value || '—' },
+                    { title: t('secrets.col.createdAt'), dataIndex: 'created_at', render: (value?: string) => fmtTime(value) },
+                    {
+                      title: t('secrets.col.actions'),
+                      width: 120,
+                      render: (_: unknown, row: { version: number }) => (
+                        <Button
+                          size="small"
+                          type="link"
+                          disabled={!canWrite}
+                          onClick={() => setRevealFor({ row: detail, version: row.version })}
+                        >
+                          {t('secrets.reveal')}
+                        </Button>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+            </div>
+
             <Alert type="info" showIcon title={t('secrets.maskTitle')} description={t('secrets.maskDescription')} />
           </div>
         ) : null}
       </Drawer>
 
-      <SecretFormModal
-        mode={formMode ?? 'create'}
-        open={!!formMode}
-        secret={formRow}
-        submitting={busy}
-        onCancel={() => setFormMode(null)}
-        onSubmit={submitForm}
+      <SecretWriteDialog
+        state={write}
+        submitting={submitting}
+        tenantOptions={tenantOptions}
+        appOptions={appOptions}
+        onCancel={() => setWrite(null)}
+        onSubmit={(values) => void submitWrite(values)}
       />
 
-      {pending ? (
-        <ReasonModal
-          title={pendingTitle}
-          description={<Alert type="warning" showIcon title={t('secrets.reasonHint')} />}
-          confirmText={pending.kind === 'reveal' ? t('secrets.reveal') : t('common.confirm')}
-          danger={pending.kind === 'delete' || pending.kind === 'batchDelete'}
-          busy={busy}
-          onCancel={() => setPending(null)}
-          onConfirm={(reason) => void runPending(reason)}
+      <Modal
+        open={!!revealFor}
+        title={t('secrets.revealTitle')}
+        okText={t('secrets.reveal')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ disabled: !revealReason.trim() || revealReason.trim().length > 200 }}
+        onCancel={() => { setRevealFor(null); setRevealReason(''); }}
+        onOk={() => revealFor && void revealVersion(revealFor.row, revealFor.version, revealReason.trim())}
+        destroyOnHidden
+      >
+        <Alert className="mb-3" type="warning" showIcon title={t('secrets.revealWarn')} />
+        <Input.TextArea
+          rows={3}
+          maxLength={200}
+          showCount
+          value={revealReason}
+          onChange={(event) => setRevealReason(event.target.value)}
+          placeholder={t('secrets.revealReasonPlaceholder')}
         />
-      ) : null}
+      </Modal>
     </>
   );
 }

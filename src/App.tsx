@@ -961,6 +961,7 @@ function Console() {
       </Layout.Header>
 
       <Layout.Content className="wrap">
+        <EnglishNotice />
         <Alert
           className="banner"
           type={platformSession ? 'info' : 'warning'}
@@ -1241,6 +1242,21 @@ function Console() {
 
 /* ------------------------------ 登录 / 状态 ------------------------------ */
 
+function EnglishNotice() {
+  if (typeof window === 'undefined' || !window.location.hostname.endsWith('.com')) return null;
+  return (
+    <div lang="en">
+      <Alert
+        className="banner"
+        type="info"
+        showIcon
+        message="This console is currently available in Chinese only."
+        description="An English UI is planned. Secret metadata and audit records are shown in Chinese."
+      />
+    </div>
+  );
+}
+
 function LoginPage({ error, onLogin }: { error: string; onLogin: () => void }) {
   return (
     <Layout className="app">
@@ -1253,6 +1269,7 @@ function LoginPage({ error, onLogin }: { error: string; onLogin: () => void }) {
               Secret Center
             </Text>
           </div>
+          <EnglishNotice />
           <h1 className="page">登录后管理密钥</h1>
           <p className="desc">需要 Autional 管理面账号（super_admin / admin）与 secret:read / secret:admin 权限。</p>
           {error ? <Alert className="banner" type="error" showIcon message={error} /> : null}

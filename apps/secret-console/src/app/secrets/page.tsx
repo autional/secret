@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Drawer, Input, Popconfirm, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Input, Popconfirm, Select, Space, Tag, Typography } from 'antd';
 import { Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader, SectionCard } from '@autional/ui';
+import { DataTable, Drawer } from '@autional/ui/antd';
 import { DATA_MODE } from '@/lib/config';
 import {
   batchDeleteSecrets,
@@ -291,7 +292,7 @@ export default function SecretsPage() {
       {error ? <Alert className="mb-3" type="error" showIcon title={error} /> : null}
 
       <SectionCard padding="none">
-        <Table
+        <DataTable
           size="small"
           rowKey="id"
           loading={loading}
@@ -343,7 +344,7 @@ export default function SecretsPage() {
 
             <div>
               <div className="mb-2 font-semibold">{t('secrets.versions')}</div>
-              <Table
+              <DataTable
                 size="small"
                 rowKey={(row) => String(row.version)}
                 dataSource={detail.versions ?? []}

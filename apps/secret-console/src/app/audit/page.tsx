@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, DatePicker, Input, Table, Tag } from 'antd';
+import { Alert, Button, Input, Tag } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader, SectionCard } from '@autional/ui';
+import { DataTable, DateRangeFilter } from '@autional/ui/antd';
 import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { listAudit } from '@/lib/api';
 import type { AuditLogItem } from '@/lib/api';
@@ -66,9 +67,10 @@ export default function AuditPage() {
             {isPlatform ? (
               <Input.Search className="w-64" allowClear placeholder={t('audit.filterTenant')} onSearch={(value) => { setTenant(value); setPage(1); }} />
             ) : null}
-            <DatePicker.RangePicker
-              onChange={(_, strings) => {
-                setRange(strings[0] && strings[1] ? [strings[0], strings[1]] : null);
+            <DateRangeFilter
+              value={range}
+              onChange={(value) => {
+                setRange(value);
                 setPage(1);
               }}
             />
@@ -79,7 +81,7 @@ export default function AuditPage() {
           {error ? <Alert className="mb-3" type="error" showIcon title={error} /> : null}
 
           <SectionCard padding="none">
-            <Table
+            <DataTable
               size="small"
               rowKey="id"
               loading={loading}

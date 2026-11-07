@@ -179,5 +179,9 @@
   "secrets.scopePlatform": "Platform-wide inventory (all tenants / all apps)",
   "secrets.scopePlatformHint": "Platform admins read every tenant; each write carries its own target tenant/app.",
   "secrets.scopeTenant": "Non-platform tenant session: some data may be unreadable",
-  "secrets.scopeTenantHint": "The server enforces the JWT tenant; sign in with a platform account for cross-tenant inventory."
+  "secrets.scopeTenantHint": "The server enforces the JWT tenant; sign in with a platform account for cross-tenant inventory.",
+  "sidebar.tenant": "Tenant",
+  "sidebar.platformTenant": "Platform",
+  "sidebar.roles": "Roles",
+  "sidebar.namespace": "Namespace"
 }

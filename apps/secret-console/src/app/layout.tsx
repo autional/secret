@@ -5,7 +5,7 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { AppShell, LanguageSwitcher, ThemeToggle, UserMenu } from '@autional/ui';
 import type { UserMenuItemSpec } from '@autional/ui';
-import { API_NAMESPACE, DATA_MODE } from '@/lib/config';
+import { API_NAMESPACE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { useSession } from '@/hooks/use-session';
 import { PortalMenu } from '@/components/portal-menu';
 import { LoginPage } from './login/page';
@@ -70,16 +70,33 @@ function Shell({ session, onLogout }: { session: ReturnType<typeof useSession>['
       }
       sidebarCollapsed={collapsed}
       nav={
-        <Menu
-          mode="inline"
-          selectedKeys={[selected === '/' ? '/' : selected]}
-          items={navItems}
-          className="border-r-0"
-          onClick={({ key }) => {
-            navigate(key);
-            setMobileOpen(false);
-          }}
-        />
+        <>
+          <Menu
+            mode="inline"
+            selectedKeys={[selected === '/' ? '/' : selected]}
+            items={navItems}
+            className="border-r-0"
+            onClick={({ key }) => {
+              navigate(key);
+              setMobileOpen(false);
+            }}
+          />
+          {collapsed || !session ? null : (
+            <div className="mt-auto border-t border-[var(--color-border-subtle)] px-4 py-3 text-xs text-[var(--color-text-secondary)]">
+              <div className="mb-1 truncate font-semibold text-[var(--color-text-primary)]">{session.user.name}</div>
+              <div className="truncate py-0.5">
+                {t('sidebar.tenant')}：
+                {session.user.tenantId === PLATFORM_TENANT_ID
+                  ? t('sidebar.platformTenant')
+                  : session.user.tenantId
+                    ? `…${session.user.tenantId.slice(-8)}`
+                    : '—'}
+              </div>
+              <div className="truncate py-0.5">{t('sidebar.roles')}：{session.user.roles.join(' / ') || '—'}</div>
+              <div className="truncate py-0.5">{t('sidebar.namespace')}：{API_NAMESPACE}</div>
+            </div>
+          )}
+        </>
       }
       headerLeft={
         <>

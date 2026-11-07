@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Empty, Input, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { Plus } from 'lucide-react';
+import { Alert, App, Button, Dropdown, Empty, Input, Select, Space, Spin, Tag, Tooltip, Typography } from 'antd';
+import { MoreHorizontal, Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader } from '@autional/ui';
@@ -397,32 +397,36 @@ export default function SecretsPage() {
               width: 80,
               render: (value?: number) => (value ? `v${value}` : '—'),
             },
-            { title: t('secrets.col.updated'), dataIndex: 'updated_at', width: 170, render: (value?: string) => fmtTime(value) },
+            { title: t('secrets.col.updated'), dataIndex: 'updated_at', width: 170, render: (value?: string) => <span className="whitespace-nowrap">{fmtTime(value)}</span> },
             {
               title: t('secrets.col.actions'),
-              width: 260,
+              width: 80,
               render: (_: unknown, row: SecretItem) => (
-                <Space size={0} wrap>
-                  <Button size="small" type="link" onClick={() => void openDetail(row.key)}>
-                    {t('common.view')}
-                  </Button>
-                  {readOnly ? null : (
-                    <>
-                      <Button size="small" type="link" disabled={!canWrite || row.status === 'revoked'} onClick={() => setWrite({ mode: 'rotate', row })}>
-                        {t('secrets.rotate')}
-                      </Button>
-                      <Button size="small" type="link" disabled={!canWrite} onClick={() => setWrite({ mode: 'edit', row })}>
-                        {t('secrets.editDescription')}
-                      </Button>
-                      <Button size="small" type="link" danger disabled={!canWrite || row.status === 'revoked'} onClick={() => setWrite({ mode: 'revoke', row })}>
-                        {t('secrets.revoke')}
-                      </Button>
-                      <Button size="small" type="link" danger disabled={!canWrite} onClick={() => setWrite({ mode: 'delete', row })}>
-                        {t('common.delete')}
-                      </Button>
-                    </>
-                  )}
-                </Space>
+                <Dropdown
+                  trigger={['click']}
+                  menu={{
+                    items: [
+                      { key: 'view', label: t('common.view') },
+                      ...(readOnly
+                        ? []
+                        : [
+                            { key: 'rotate', label: t('secrets.rotate'), disabled: !canWrite || row.status === 'revoked' },
+                            { key: 'edit', label: t('secrets.editDescription'), disabled: !canWrite },
+                            { key: 'revoke', label: t('secrets.revoke'), danger: true, disabled: !canWrite || row.status === 'revoked' },
+                            { key: 'delete', label: t('common.delete'), danger: true, disabled: !canWrite },
+                          ]),
+                    ],
+                    onClick: ({ key }) => {
+                      if (key === 'view') void openDetail(row.key);
+                      else if (key === 'rotate') setWrite({ mode: 'rotate', row });
+                      else if (key === 'edit') setWrite({ mode: 'edit', row });
+                      else if (key === 'revoke') setWrite({ mode: 'revoke', row });
+                      else if (key === 'delete') setWrite({ mode: 'delete', row });
+                    },
+                  }}
+                >
+                  <Button size="small" type="text" icon={<MoreHorizontal size={16} />} aria-label={t('secrets.col.actions')} />
+                </Dropdown>
               ),
             },
           ]}

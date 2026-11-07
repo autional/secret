@@ -411,11 +411,30 @@ export async function getTenant(tenantId: string): Promise<TenantItem | null> {
   }
 }
 
-/** 用户详情（按数据租户解析；失败返回 null，UI 回退显示 ID）。 */
+type IdentityItem = { type?: string; identifier?: string };
+type UserEnvelope = {
+  user?: UserItem;
+  identities?: IdentityItem[];
+} & UserItem;
+
+/** 用户详情（按数据租户解析；失败返回 null，UI 回退显示 ID）。
+ *
+ * 管理面响应形状是 `{ data: { user: {...}, identities: [...] } }`（不是扁平的 user），
+ * 且 username/email 在 identities 里也可能有值 —— 两者都要读。
+ */
 export async function getUser(userId: string, scope?: ScopeOverride): Promise<UserItem | null> {
   try {
-    const res = await request<{ data?: UserItem }>(IDENTITY_BASE, `/users/${encodeURIComponent(userId)}`, { scope });
-    return res?.data ?? null;
+    const res = await request<{ data?: UserEnvelope }>(IDENTITY_BASE, `/users/${encodeURIComponent(userId)}`, { scope });
+    const data = res?.data;
+    if (!data) return null;
+    const user: UserItem = data.user ?? data;
+    let username = user.username;
+    let email = user.email;
+    for (const item of data.identities ?? []) {
+      if (!username && item.type === 'username') username = item.identifier;
+      if (!email && item.type === 'email') email = item.identifier;
+    }
+    return { id: user.id || userId, username, email };
   } catch {
     return null;
   }

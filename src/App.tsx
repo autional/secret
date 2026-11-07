@@ -1877,6 +1877,23 @@ function AuditPage(props: {
           columns={[
             { title: '时间', dataIndex: 'timestamp', width: 180, render: (value?: number) => fmtTime(value) },
             {
+              title: '对象',
+              dataIndex: 'target_id',
+              ellipsis: true,
+              render: (value?: string, row?: AuditLogItem) => (
+                <span>
+                  <code className="mono small">{value || '—'}</code>
+                  {row?.target_type ? <Text type="secondary" className="small"> · {row.target_type}</Text> : null}
+                </span>
+              ),
+            },
+            {
+              title: '动作',
+              dataIndex: 'action',
+              width: 160,
+              render: (value?: string) => <code className="mono small">{value || '—'}</code>,
+            },
+            {
               title: '租户',
               dataIndex: 'tenant_id',
               width: 230,
@@ -1911,23 +1928,6 @@ function AuditPage(props: {
                   </Tooltip>
                 );
               },
-            },
-            {
-              title: '动作',
-              dataIndex: 'action',
-              width: 160,
-              render: (value?: string) => <code className="mono small">{value || '—'}</code>,
-            },
-            {
-              title: '对象',
-              dataIndex: 'target_id',
-              ellipsis: true,
-              render: (value?: string, row?: AuditLogItem) => (
-                <span>
-                  <code className="mono small">{value || '—'}</code>
-                  {row?.target_type ? <Text type="secondary" className="small"> · {row.target_type}</Text> : null}
-                </span>
-              ),
             },
             {
               title: '结果',

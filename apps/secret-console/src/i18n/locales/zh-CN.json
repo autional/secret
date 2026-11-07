@@ -175,5 +175,9 @@
   "secrets.tenantRequired": "请选择/填写租户",
   "secrets.total": "共 {{count}} 条",
   "secrets.valueHint": "创建后默认不回显；查看明文需原因 + 审计（30 秒自动隐藏）。",
-  "secrets.valuePlaceholder": "输入密钥值"
+  "secrets.valuePlaceholder": "输入密钥值",
+  "secrets.scopePlatform": "平台级盘点（全部租户 / 全部应用）",
+  "secrets.scopePlatformHint": "平台管理员默认读取全部租户；单条写操作按行携带目标租户/应用。",
+  "secrets.scopeTenant": "非平台租户会话：可能无法读取全部数据",
+  "secrets.scopeTenantHint": "服务端按 JWT 租户强制过滤；需要跨租户盘点请用平台账号登录。"
 }

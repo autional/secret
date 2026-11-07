@@ -74,6 +74,7 @@ export default function SecretsPage() {
     return roles.includes('security_admin') && !roles.includes('super_admin') && !roles.includes('admin');
   }, [session]);
   const canWrite = DATA_MODE === 'api' && !readOnly;
+  const isPlatformSession = session?.user.tenantId === PLATFORM_TENANT_ID;
 
   const load = useCallback(async () => {
     if (DATA_MODE !== 'api') {
@@ -316,7 +317,17 @@ export default function SecretsPage() {
         </Button>
       </div>
 
-      {!canWrite && DATA_MODE !== 'api' ? <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} /> : null}
+      {DATA_MODE === 'api' ? (
+        <Alert
+          className="mb-3"
+          type={isPlatformSession ? 'info' : 'warning'}
+          showIcon
+          title={isPlatformSession ? t('secrets.scopePlatform') : t('secrets.scopeTenant')}
+          description={isPlatformSession ? t('secrets.scopePlatformHint') : t('secrets.scopeTenantHint')}
+        />
+      ) : (
+        <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} />
+      )}
       {error ? (
         <Alert
           className="mb-3"
@@ -334,7 +345,7 @@ export default function SecretsPage() {
           rowKey={(row) => `${row.tenant_id ?? ''}/${row.app_id ?? ''}/${row.key}`}
           dataSource={rows}
           loading={loading}
-          scroll={{ x: 1280 }}
+          scroll={{ x: 'max-content' }}
           rowSelection={readOnly ? undefined : { selectedRowKeys: selected, onChange: (keys) => setSelected(keys.map(String)) }}
           pagination={{
             current: page,

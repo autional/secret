@@ -175,5 +175,9 @@
   "secrets.tenantRequired": "Select or enter a tenant",
   "secrets.total": "{{count}} items",
   "secrets.valueHint": "Values are never echoed back; revealing requires a reason and is audited (hides after 30 seconds).",
-  "secrets.valuePlaceholder": "Enter the secret value"
+  "secrets.valuePlaceholder": "Enter the secret value",
+  "secrets.scopePlatform": "Platform-wide inventory (all tenants / all apps)",
+  "secrets.scopePlatformHint": "Platform admins read every tenant; each write carries its own target tenant/app.",
+  "secrets.scopeTenant": "Non-platform tenant session: some data may be unreadable",
+  "secrets.scopeTenantHint": "The server enforces the JWT tenant; sign in with a platform account for cross-tenant inventory."
 }

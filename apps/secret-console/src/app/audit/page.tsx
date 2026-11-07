@@ -293,7 +293,7 @@ export default function AuditPage() {
               dataSource={rows}
               loading={loading}
               columns={columns as any}
-              scroll={{ x: 1100 }}
+              scroll={{ x: 'max-content' }}
               pagination={{
                 current: page,
                 pageSize: PAGE_SIZE,

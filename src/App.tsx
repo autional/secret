@@ -440,14 +440,6 @@ function Console() {
     void loadEncryptionKey();
   }, [authReady, session, loadScopes, loadStats, loadEncryptionKey]);
 
-  /* 审计租户默认值：过滤租户 → _system → 第一个租户 */
-  useEffect(() => {
-    if (auditTenant || !scopes.length) return;
-    const tenants = [...new Set(scopes.map((row) => row.tenant_id))];
-    const preferred = tenantFilter || (tenants.includes('_system') ? '_system' : tenants[0] ?? '');
-    setAuditTenant(preferred);
-  }, [scopes, tenantFilter, auditTenant]);
-
   /* 列表 / 策略 */
   useEffect(() => {
     if (!authReady) return;
@@ -1742,10 +1734,10 @@ function AuditPage(props: {
         className="banner"
         type="info"
         showIcon
-        message={platform ? `审计范围：${tenantId || '未选择租户'}` : '审计范围：认证租户'}
+        message={platform ? `审计范围：${tenantId || '全部租户（默认近 30 天）'}` : '审计范围：认证租户'}
         description={
           platform
-            ? '平台管理员按所选租户读取审计事件（/platform/logs，要求 super_admin/admin）。'
+            ? '平台管理员默认读取全部租户（近 30 天）；可输入租户 ULID 收窄。'
             : '服务端强制使用 JWT 租户查询；非平台账号只能看到本租户事件。'
         }
       />
@@ -1764,8 +1756,8 @@ function AuditPage(props: {
         <Space wrap className="filters">
           {platform ? (
             <AutoComplete
-              style={{ width: 300 }}
-              placeholder="租户（必选）"
+              style={{ width: 320 }}
+              placeholder="全部租户（可输入租户 ULID 过滤）"
               value={tenantId}
               options={tenantOptions}
               filterOption={(input, option) =>
@@ -1774,6 +1766,7 @@ function AuditPage(props: {
                   .includes(input.toLowerCase())
               }
               onChange={(value) => onTenant(value)}
+              allowClear
             />
           ) : null}
           <Select

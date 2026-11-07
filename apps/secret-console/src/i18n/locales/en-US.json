@@ -123,5 +123,7 @@
   "audit.col.message": "Message",
   "notFound.title": "Page not found",
   "notFound.description": "The link may be stale.",
-  "notFound.back": "Back to overview"
+  "notFound.back": "Back to overview",
+  "overview.healthOk": "API reachable",
+  "overview.healthFailed": "API unreachable"
 }

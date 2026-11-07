@@ -123,5 +123,7 @@
   "audit.col.message": "说明",
   "notFound.title": "页面不存在",
   "notFound.description": "链接可能已失效。",
-  "notFound.back": "返回概览"
+  "notFound.back": "返回概览",
+  "overview.healthOk": "API 已连通",
+  "overview.healthFailed": "API 不可达"
 }

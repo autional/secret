@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader, SectionCard } from '@autional/ui';
 import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID, RUNTIME_MODE_LABEL } from '@/lib/config';
-import { getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, upsertSecretPolicy } from '@/lib/api';
+import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, upsertSecretPolicy } from '@/lib/api';
 import type { SecretPolicy, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
 
@@ -17,6 +17,7 @@ export default function OverviewPage() {
   const [policy, setPolicy] = useState<SecretPolicy | null>(null);
   const [policyError, setPolicyError] = useState('');
   const [encryptionKey, setEncryptionKey] = useState('');
+  const [health, setHealth] = useState<{ ok: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
@@ -57,6 +58,9 @@ export default function OverviewPage() {
     } catch {
       /* 缺失不影响主流程 */
     }
+    checkApi()
+      .then((res) => setHealth({ ok: res.ok, message: res.message }))
+      .catch(() => setHealth({ ok: false, message: t('overview.healthFailed') }));
   }, []);
 
   useEffect(() => {
@@ -181,8 +185,16 @@ export default function OverviewPage() {
 
         <SectionCard title={t('overview.runtimeTitle')}>
           <div className="space-y-2 text-sm text-[var(--color-text-secondary)]">
+            <div className="flex items-center gap-2">
+              <span>{t('overview.apiBase')}</span>
+              {health ? (
+                <Tag color={health.ok ? 'green' : 'red'} title={health.message}>
+                  {health.ok ? t('overview.healthOk') : t('overview.healthFailed')}
+                </Tag>
+              ) : null}
+            </div>
             <div>
-              {t('overview.apiBase')}：<code className="font-mono text-xs">{API_BASE}</code>
+              <code className="font-mono text-xs">{API_BASE}</code>
             </div>
             <div>
               {t('overview.dataMode')}：{DATA_MODE === 'api' ? RUNTIME_MODE_LABEL : t('header.demoMode')} ·{' '}

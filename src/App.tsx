@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   App as AntdApp,
@@ -55,6 +55,7 @@ import {
   listAllSecrets,
   listAudit,
   listTenants,
+  revealSecretVersion,
   revokeSecret,
   rotateSecret,
   updateSecretMeta,
@@ -230,6 +231,13 @@ function Console() {
   const [detail, setDetail] = useState<SecretDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+
+  const [revealTarget, setRevealTarget] = useState<{ key: string; version: number; scope: ScopeOverride } | null>(null);
+  const [revealReason, setRevealReason] = useState('');
+  const [revealValue, setRevealValue] = useState<string | null>(null);
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [revealError, setRevealError] = useState('');
+  const revealTimer = useRef<number | null>(null);
 
   const [write, setWrite] = useState<WriteState | null>(null);
   const [writeLoading, setWriteLoading] = useState(false);
@@ -544,9 +552,11 @@ function Console() {
       const next: Record<string, string> = {};
       for (const id of missing) {
         const row = auditRows.find((r) => r.operator_id === id);
+        // 先按平台租户解析（密钥中心操作者通常是平台账号），失败再按事件租户；
+        // 避免每页先打一次必然 404 的事件租户请求。
+        let user = await getUser(id, { tenantId: PLATFORM_TENANT_ID });
         const tenantId = row?.tenant_id ?? '';
-        let user = tenantId ? await getUser(id, { tenantId }) : null;
-        if (!user) user = await getUser(id, { tenantId: PLATFORM_TENANT_ID });
+        if (!user && tenantId) user = await getUser(id, { tenantId });
         if (user) next[id] = user.username || user.email || id;
       }
       if (alive && Object.keys(next).length) setUserNames((prev) => ({ ...prev, ...next }));
@@ -671,6 +681,60 @@ function Console() {
     tenantId: row.tenant_id ?? '',
     appId: row.app_id ?? '',
   });
+
+  const clearRevealTimer = () => {
+    if (revealTimer.current !== null) {
+      window.clearTimeout(revealTimer.current);
+      revealTimer.current = null;
+    }
+  };
+
+  const closeReveal = () => {
+    clearRevealTimer();
+    setRevealTarget(null);
+    setRevealReason('');
+    setRevealValue(null);
+    setRevealError('');
+  };
+
+  const openReveal = (row: SecretItem, version: number) => {
+    clearRevealTimer();
+    setRevealTarget({ key: row.key, version, scope: scopeOf(row) });
+    setRevealReason('');
+    setRevealValue(null);
+    setRevealError('');
+  };
+
+  const confirmReveal = async () => {
+    if (!revealTarget) return;
+    const reason = revealReason.trim();
+    if (!reason) {
+      setRevealError('请填写操作原因，以便审计。');
+      return;
+    }
+    setRevealLoading(true);
+    setRevealError('');
+    try {
+      const res = await revealSecretVersion(revealTarget.key, revealTarget.version, reason, revealTarget.scope);
+      setRevealValue(res?.value ?? '');
+      clearRevealTimer();
+      revealTimer.current = window.setTimeout(() => {
+        setRevealValue(null);
+        message.info('明文已自动隐藏（30 秒）');
+      }, 30000);
+    } catch (err) {
+      setRevealError(errorText(err));
+    } finally {
+      setRevealLoading(false);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if (revealTimer.current !== null) window.clearTimeout(revealTimer.current);
+    },
+    [],
+  );
 
   const openWrite = (state: WriteState, initial?: Record<string, unknown>) => {
     form.resetFields();
@@ -1101,18 +1165,66 @@ function Console() {
             </div>
 
             <h3 className="sub-title">版本</h3>
-            <VersionTable versions={detail?.versions ?? []} />
+            <VersionTable
+              versions={detail?.versions ?? []}
+              onReveal={(version) => viewing && openReveal(viewing, version)}
+              revealDisabled={readOnly}
+            />
 
             <Alert
               className="banner top-gap"
               type="warning"
               showIcon
-              message="密钥值不在本界面展示"
-              description="本版本只提供元数据与版本号；明文读取接口（/versions/value）有意未接入。"
+              message="密钥明文默认不展示"
+              description="查看明文需填写原因并写入审计（version_read）；明文只在本次会话内展示 30 秒。"
             />
           </>
         ) : null}
       </Drawer>
+
+      <Modal
+        open={!!revealTarget}
+        title="查看密钥明文"
+        onCancel={closeReveal}
+        footer={
+          revealValue !== null ? (
+            <Button onClick={closeReveal}>关闭</Button>
+          ) : (
+            <Space>
+              <Button onClick={closeReveal}>取消</Button>
+              <Button type="primary" loading={revealLoading} onClick={() => void confirmReveal()}>
+                查看明文
+              </Button>
+            </Space>
+          )
+        }
+        destroyOnHidden
+      >
+        {revealValue !== null ? (
+          <>
+            <Alert type="info" showIcon message="明文已显示，将在 30 秒后自动隐藏。" />
+            <Input.TextArea value={revealValue} readOnly rows={6} className="mono" />
+            {revealTarget ? (
+              <div className="hint">
+                版本 v{revealTarget.version} · 本次查看已写入审计
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {revealError ? <Alert type="error" showIcon message={revealError} /> : null}
+            <p className="hint">查看明文会记录操作原因与审计事件，明文只在本次会话内展示 30 秒。</p>
+            <Input.TextArea
+              value={revealReason}
+              onChange={(event) => setRevealReason(event.target.value)}
+              rows={3}
+              maxLength={512}
+              showCount
+              placeholder="填写查看明文的原因（写入审计）"
+            />
+          </>
+        )}
+      </Modal>
 
       <WriteDialog
         state={write}
@@ -1415,8 +1527,8 @@ function Overview(props: {
         className="banner top-gap"
         type="info"
         showIcon
-        message="本界面不展示密钥值"
-        description="密钥值只写不读；创建 / 轮换使用新值覆盖，历史版本只保留版本号与创建者。"
+        message="密钥明文默认遮罩"
+        description="创建 / 轮换后值默认不展示；查看明文需填写原因、写入审计，并在 30 秒后自动隐藏。"
       />
     </>
   );
@@ -1674,7 +1786,15 @@ function SecretsPage(props: {
   );
 }
 
-function VersionTable({ versions }: { versions: SecretVersion[] }) {
+function VersionTable({
+  versions,
+  onReveal,
+  revealDisabled,
+}: {
+  versions: SecretVersion[];
+  onReveal?: (version: number) => void;
+  revealDisabled?: boolean;
+}) {
   if (!versions.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无版本信息" />;
   return (
     <Table
@@ -1686,6 +1806,20 @@ function VersionTable({ versions }: { versions: SecretVersion[] }) {
         { title: '版本', dataIndex: 'version', width: 90, render: (value: number) => `v${value}` },
         { title: '创建者', dataIndex: 'created_by', render: (value?: string) => value || '—' },
         { title: '创建时间', dataIndex: 'created_at', render: (value?: string) => fmtTime(value) },
+        {
+          title: '操作',
+          width: 110,
+          render: (_: unknown, row: SecretVersion) => (
+            <Button
+              size="small"
+              type="link"
+              disabled={revealDisabled || !onReveal}
+              onClick={() => onReveal?.(row.version)}
+            >
+              查看明文
+            </Button>
+          ),
+        },
       ]}
     />
   );
@@ -1768,7 +1902,7 @@ function WriteDialog(props: {
             >
               <Input placeholder="db/postgres/password" autoComplete="off" />
             </Form.Item>
-            <Form.Item name="value" label="密钥值" rules={[{ required: true, message: '请输入密钥值' }]} extra="只写不读；创建后只能轮换，不能回看。">
+            <Form.Item name="value" label="密钥值" rules={[{ required: true, message: '请输入密钥值' }]} extra="创建后默认不回显；查看明文需原因 + 审计（30 秒自动隐藏）。">
               <Input.Password autoComplete="new-password" placeholder="输入密钥值" />
             </Form.Item>
             <Form.Item name="description" label="描述">

@@ -178,6 +178,16 @@ function userFromClaims(claims: Record<string, unknown> | null, fallbackName: st
   };
 }
 
+/** 过期时间：优先 JWT `exp`（服务端真实 TTL），其次 expires_in，最后 30 分钟兜底。 */
+function expiresAtFromToken(accessToken: string, expiresIn?: number): number {
+  const claims = decodeJwtPayload(accessToken);
+  const exp = claims && typeof claims.exp === 'number' ? claims.exp : 0;
+  if (exp > 0) return exp * 1000;
+  const sec = Number(expiresIn);
+  if (Number.isFinite(sec) && sec > 0) return Date.now() + sec * 1000;
+  return Date.now() + 30 * 60_000;
+}
+
 function saveSession(session: Session): void {
   writeStorage(SESSION_KEY, JSON.stringify(session));
 }
@@ -366,7 +376,7 @@ export async function completeLogin(search: string = window.location.search): Pr
     accessToken: data.access_token as string,
     refreshToken: data.refresh_token,
     idToken: data.id_token,
-    expiresAt: Date.now() + Math.max(60, Number(data.expires_in) || 3600) * 1000,
+    expiresAt: expiresAtFromToken(data.access_token as string, data.expires_in),
     user: userFromClaims(claims, '已登录用户'),
   };
   saveSession(session);
@@ -415,7 +425,7 @@ async function doRefreshSession(stored?: Session | null): Promise<Session | null
       accessToken: data.access_token as string,
       refreshToken: data.refresh_token ?? base.refreshToken,
       idToken: data.id_token ?? base.idToken,
-      expiresAt: Date.now() + Math.max(60, Number(data.expires_in) || 3600) * 1000,
+      expiresAt: expiresAtFromToken(data.access_token as string, data.expires_in),
       user: userFromClaims(claims, base.user?.name || '已登录用户'),
     };
     // 令牌内没有租户/应用声明时，保留上一轮已知值，避免 X-Tenant-ID 丢失。

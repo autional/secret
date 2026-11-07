@@ -16,7 +16,7 @@ const root = document.getElementById('root');
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <ThemeProvider storageKey="config-console-theme">
+      <ThemeProvider storageKey="secret-console-theme">
         <AntdThemeProvider>
           <BrowserRouter>
             <App />

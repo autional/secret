@@ -52,9 +52,9 @@ const spaFallback: Rewrite = {
 
 export const config: VercelConfig = {
   framework: 'vite',
-  installCommand: 'npm ci',
-  buildCommand: 'npm run build',
-  outputDirectory: 'dist',
+  installCommand: 'pnpm install --frozen-lockfile',
+  buildCommand: 'pnpm --filter @autional/secret-console build',
+  outputDirectory: 'apps/secret-console/dist',
   headers: [
     routes.header('/(.*)', SECURITY_HEADERS),
     routes.header('/assets/(.*)', [{ key: 'Cache-Control', value: IMMUTABLE }]),

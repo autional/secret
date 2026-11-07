@@ -2,8 +2,8 @@ node_modules/
 dist/
 .vercel/
 *.log
+.pnpm-debug.log*
 
-.vercel
-.env*
-
+.env
+.env.*
 !.env.example

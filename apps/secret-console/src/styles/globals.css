@@ -1,0 +1,18 @@
+/* 令牌随应用打包（同源、带 hash）：与 admin 同口径，不走 CDN 运行期加载。
+   CDN 被安全策略 challenge 时 var(--color-*) 会整体失效。 */
+@import '@autional/tokens/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* 画布背景显式来自令牌：body 的背景会被传播到 canvas，
+     暗色档下若沿用浏览器默认会在大面积滚动区露出浅色。 */
+  html,
+  body {
+    margin: 0;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+  }
+}

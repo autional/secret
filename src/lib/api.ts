@@ -466,6 +466,8 @@ export type ListAuditQuery = {
   keyword?: string;
   page?: number;
   page_size?: number;
+  start_date?: string;
+  end_date?: string;
   /** 平台范围查询的数据租户（platform=true 时必填，可为 `_system`） */
   tenantId?: string;
   /** true = 走平台管理员跨租户端点（/platform/logs） */

@@ -37,7 +37,7 @@ import {
   REQUIRE_AUTH,
   RUNTIME_MODE_LABEL,
 } from './lib/config';
-import { completeLogin, restoreSession, signOut, startLogin } from './lib/auth';
+import { SESSION_STORAGE_KEY, completeLogin, ensureFreshSession, restoreSession, signOut, startLogin } from './lib/auth';
 import type { Session } from './lib/auth';
 import {
   UNAUTHORIZED_EVENT,
@@ -244,8 +244,10 @@ function Console() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
   const [auditPage, setAuditPage] = useState(1);
-  const [auditAction, setAuditAction] = useState('all');
+  const [auditAction, setAuditAction] = useState('');
   const [auditTenant, setAuditTenant] = useState('');
+  const [auditStart, setAuditStart] = useState('');
+  const [auditEnd, setAuditEnd] = useState('');
   const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
   const [userNames, setUserNames] = useState<Record<string, string>>({});
 
@@ -368,7 +370,9 @@ function Console() {
     setAuditLoading(true);
     setAuditError('');
     const base = {
-      action: auditAction === 'all' ? undefined : auditAction,
+      action: auditAction.trim() || undefined,
+      start_date: auditStart || undefined,
+      end_date: auditEnd || undefined,
       page: auditPage,
       page_size: 20,
     };
@@ -390,7 +394,7 @@ function Console() {
     } finally {
       setAuditLoading(false);
     }
-  }, [auditAction, auditPage, auditTenant, tenantFilter, platformSession, session]);
+  }, [auditAction, auditStart, auditEnd, auditPage, auditTenant, tenantFilter, platformSession, session]);
 
   /* 登录态 */
   useEffect(() => {
@@ -404,6 +408,49 @@ function Console() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  /* 主动续期：剩余 < 5 分钟时刷新；页面重新可见时也检查一次 */
+  useEffect(() => {
+    if (!session || AUTH_MODE === 'mock') return;
+    let alive = true;
+    const tick = async () => {
+      const next = await ensureFreshSession();
+      if (!alive) return;
+      if (!next) {
+        setSession(null);
+        return;
+      }
+      setSession((prev) => (prev && prev.accessToken === next.accessToken ? prev : next));
+    };
+    const timer = window.setInterval(() => void tick(), 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [session?.accessToken]);
+
+  /* 跨标签同步：其它标签登录/退出时同步本标签 */
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== SESSION_STORAGE_KEY) return;
+      if (!event.newValue) {
+        setSession(null);
+        return;
+      }
+      try {
+        setSession(JSON.parse(event.newValue) as Session);
+      } catch {
+        /* 忽略损坏值 */
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   /* 401 → 清会话 */
@@ -956,6 +1003,8 @@ function Console() {
             error={auditError}
             pageNo={auditPage}
             action={auditAction}
+            startDate={auditStart}
+            endDate={auditEnd}
             platform={platformSession}
             tenantId={auditTenant}
             tenantOptions={tenantOptions}
@@ -967,6 +1016,14 @@ function Console() {
             }}
             onAction={(value) => {
               setAuditAction(value);
+              setAuditPage(1);
+            }}
+            onStartDate={(value) => {
+              setAuditStart(value);
+              setAuditPage(1);
+            }}
+            onEndDate={(value) => {
+              setAuditEnd(value);
               setAuditPage(1);
             }}
             onPage={setAuditPage}
@@ -1659,6 +1716,21 @@ function WriteDialog(props: {
   const mode = state?.mode;
   const destructive = mode === 'revoke' || mode === 'delete' || mode === 'batch-revoke' || mode === 'batch-delete';
   const count = state?.keys?.length ?? 0;
+  const [confirmText, setConfirmText] = useState('');
+
+  useEffect(() => {
+    setConfirmText('');
+  }, [state?.mode, state?.key, state?.keys]);
+
+  const confirmTarget =
+    mode === 'revoke' || mode === 'delete'
+      ? state?.key ?? ''
+      : mode === 'batch-revoke'
+        ? 'REVOKE'
+        : mode === 'batch-delete'
+          ? 'DELETE'
+          : '';
+  const confirmBlocked = destructive && confirmTarget !== '' && confirmText !== confirmTarget;
 
   return (
     <Modal
@@ -1667,7 +1739,7 @@ function WriteDialog(props: {
       onCancel={onCancel}
       onOk={onSubmit}
       okText={destructive ? '确认' : '保存'}
-      okButtonProps={{ danger: destructive, loading }}
+      okButtonProps={{ danger: destructive, loading, disabled: confirmBlocked }}
       destroyOnHidden
       width={560}
     >
@@ -1748,6 +1820,22 @@ function WriteDialog(props: {
           />
         ) : null}
 
+        {destructive && confirmTarget ? (
+          <Form.Item
+            label={`输入 ${confirmTarget} 确认`}
+            required
+            validateStatus={confirmBlocked ? 'error' : undefined}
+            help={confirmBlocked ? '需逐字输入目标名称/确认词后才能执行' : undefined}
+          >
+            <Input
+              value={confirmText}
+              onChange={(event) => setConfirmText(event.target.value)}
+              placeholder={confirmTarget}
+              autoComplete="off"
+            />
+          </Form.Item>
+        ) : null}
+
         <Form.Item name="reason" label="变更原因（可选）" extra="写入审计事件 metadata.change_reason（创建/改描述另存 metadata.change_reason）。">
           <Input placeholder="例如：季度轮换 / 凭据泄露应急处置" />
         </Form.Item>
@@ -1758,20 +1846,6 @@ function WriteDialog(props: {
 
 /* -------------------------------- 审计 -------------------------------- */
 
-const AUDIT_ACTIONS = [
-  'all',
-  'admin_list',
-  'admin_detail',
-  'store',
-  'update',
-  'rotate',
-  'revoke',
-  'delete',
-  'batch_revoke',
-  'batch_delete',
-  'policy_upsert',
-];
-
 function AuditPage(props: {
   rows: AuditLogItem[];
   total: number;
@@ -1779,6 +1853,8 @@ function AuditPage(props: {
   error: string;
   pageNo: number;
   action: string;
+  startDate: string;
+  endDate: string;
   platform: boolean;
   tenantId: string;
   tenantOptions: { value: string; label: string }[];
@@ -1786,6 +1862,8 @@ function AuditPage(props: {
   userNames: Record<string, string>;
   onTenant: (value: string) => void;
   onAction: (value: string) => void;
+  onStartDate: (value: string) => void;
+  onEndDate: (value: string) => void;
   onPage: (page: number) => void;
   onReload: () => void;
 }) {
@@ -1796,6 +1874,8 @@ function AuditPage(props: {
     error,
     pageNo,
     action,
+    startDate,
+    endDate,
     platform,
     tenantId,
     tenantOptions,
@@ -1803,6 +1883,8 @@ function AuditPage(props: {
     userNames,
     onTenant,
     onAction,
+    onStartDate,
+    onEndDate,
     onPage,
     onReload,
   } = props;
@@ -1858,12 +1940,17 @@ function AuditPage(props: {
               allowClear
             />
           ) : null}
-          <Select
+          <Input
             style={{ width: 200 }}
+            placeholder="动作（如 revoke，留空=全部）"
             value={action}
-            onChange={onAction}
-            options={AUDIT_ACTIONS.map((value) => ({ value, label: value === 'all' ? '全部动作' : value }))}
+            onChange={(event) => onAction(event.target.value)}
+            allowClear
           />
+          <span className="hint">起</span>
+          <Input type="date" style={{ width: 160 }} value={startDate} onChange={(event) => onStartDate(event.target.value)} />
+          <span className="hint">止</span>
+          <Input type="date" style={{ width: 160 }} value={endDate} onChange={(event) => onEndDate(event.target.value)} />
           <span className="hint">共 {total} 条</span>
         </Space>
         <Table

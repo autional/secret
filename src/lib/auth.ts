@@ -3,8 +3,9 @@
  *
  * 约定（与 platform SDK / 门户一致）：
  *   - 公开客户端（is_confidential=false），不存 client_secret；
- *   - token 存 sessionStorage（关闭标签页即失效；不写 localStorage，避免长期驻留）；
+ *   - token 存 localStorage（与其它门户一致）：刷新/新标签/跨页保持登录；
  *   - 回调地址默认 `${origin}/oauth/callback`，必须与 OAuth 客户端登记的 redirect_uris 逐字一致；
+ *   - 主动续期：剩余 < 5 分钟或页面重新可见时自动 refresh；401 单飞重试。
  *   - VITE_AUTH_MODE=mock 时返回演示会话（密钥中心管理员），不发任何网络请求。
  *
  * 安全要点：
@@ -56,7 +57,9 @@ type PkceState = {
   at: number;
 };
 
-const SESSION_KEY = 'secret-center:auth:v1';
+export const SESSION_STORAGE_KEY = 'secret-center:auth:v2';
+const SESSION_KEY = SESSION_STORAGE_KEY;
+const LEGACY_SESSION_KEY = 'secret-center:auth:v1';
 const PKCE_KEY = 'secret-center:pkce:v1';
 /** mock 模式下点过「退出」的标记（否则演示会话每次都自动存在）。 */
 const MOCK_SIGNED_OUT_KEY = 'secret-center:auth:signed-out:v1';
@@ -64,10 +67,14 @@ const MOCK_SIGNED_OUT_KEY = 'secret-center:auth:signed-out:v1';
 /** 提前 60s 视为过期，避免请求途中失效。 */
 const EXPIRY_SKEW_MS = 60_000;
 
-/** sessionStorage 在隐私模式/被禁用时会抛异常：一律降级为「无会话」，绝不抛到 UI。 */
+/**
+ * localStorage 持久化（与 platform/admin/security 等门户一致）：
+ * sessionStorage 按标签页隔离 —— 新标签打开或跨页跳转即掉登录，是此前「刷新/换页就掉线」的根因。
+ * 隐私模式/被禁用时 try/catch 降级为「无会话」，绝不抛到 UI。
+ */
 function readStorage(key: string): string | null {
   try {
-    return window.sessionStorage.getItem(key);
+    return window.localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -75,7 +82,7 @@ function readStorage(key: string): string | null {
 
 function writeStorage(key: string, value: string): void {
   try {
-    window.sessionStorage.setItem(key, value);
+    window.localStorage.setItem(key, value);
   } catch {
     /* 忽略：无存储时退化为「每次刷新都要重新登录」 */
   }
@@ -83,7 +90,21 @@ function writeStorage(key: string, value: string): void {
 
 function removeStorage(key: string): void {
   try {
-    window.sessionStorage.removeItem(key);
+    window.localStorage.removeItem(key);
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 兼容旧会话（v1 在 sessionStorage）：只迁移一次，避免升级后强制重登。 */
+function migrateLegacySession(): void {
+  try {
+    if (window.localStorage.getItem(SESSION_KEY)) return;
+    const legacy = window.sessionStorage.getItem(LEGACY_SESSION_KEY);
+    if (legacy) {
+      window.localStorage.setItem(SESSION_KEY, legacy);
+      window.sessionStorage.removeItem(LEGACY_SESSION_KEY);
+    }
   } catch {
     /* 忽略 */
   }
@@ -197,6 +218,7 @@ export function mockSession(): Session {
 /** 当前会话（同步读）；过期返回 null。 */
 export function currentSession(): Session | null {
   if (AUTH_MODE === 'mock') {
+    migrateLegacySession();
     return readStorage(MOCK_SIGNED_OUT_KEY) === '1' ? null : mockSession();
   }
   const raw = readStorage(SESSION_KEY);
@@ -214,6 +236,7 @@ export function currentSession(): Session | null {
 /** 启动时恢复会话：过期但有 refresh_token 时静默续期。 */
 export async function restoreSession(): Promise<Session | null> {
   if (AUTH_MODE === 'mock') return currentSession();
+  migrateLegacySession();
   const raw = readStorage(SESSION_KEY);
   if (!raw) return null;
   let stored: Session;
@@ -267,6 +290,17 @@ export async function startLogin(): Promise<Session | null> {
   return null;
 }
 
+/** 令牌端点错误：区分「网络/网关瞬时故障」与「确定失败（invalid_grant 等）」。 */
+class TokenError extends Error {
+  readonly transient: boolean;
+
+  constructor(message: string, transient: boolean) {
+    super(message);
+    this.name = 'TokenError';
+    this.transient = transient;
+  }
+}
+
 async function postToken(body: URLSearchParams): Promise<TokenResponse> {
   let res: Response;
   try {
@@ -276,12 +310,13 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
       body: body.toString(),
     });
   } catch (cause) {
-    throw new Error(`无法连接令牌端点（${OIDC.tokenUrl}）：${(cause as Error).message}`);
+    throw new TokenError(`无法连接令牌端点（${OIDC.tokenUrl}）：${(cause as Error).message}`, true);
   }
   const data = (await res.json().catch(() => null)) as TokenResponse | null;
   if (!res.ok || !data?.access_token) {
     const reason = data?.error_description || data?.error || `HTTP ${res.status}`;
-    throw new Error(`换取令牌失败：${reason}`);
+    // 5xx / 0 = 瞬时；4xx（invalid_grant 等）= 确定失败
+    throw new TokenError(`换取令牌失败：${reason}`, res.status >= 500 || res.status === 0);
   }
   return data;
 }
@@ -338,9 +373,19 @@ export async function completeLogin(search: string = window.location.search): Pr
   return session;
 }
 
-/** 用 refresh_token 续期；失败返回 null 并清理会话。 */
-export async function refreshSession(stored?: Session | null): Promise<Session | null> {
-  if (AUTH_MODE === 'mock') return currentSession();
+let refreshInFlight: Promise<Session | null> | null = null;
+
+/** 用 refresh_token 续期；单飞（并发 401/定时刷新只发一次）。确定失败才清会话。 */
+export function refreshSession(stored?: Session | null): Promise<Session | null> {
+  if (AUTH_MODE === 'mock') return Promise.resolve(currentSession());
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefreshSession(stored).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function doRefreshSession(stored?: Session | null): Promise<Session | null> {
   let base = stored ?? null;
   if (!base) {
     const raw = readStorage(SESSION_KEY);
@@ -378,10 +423,37 @@ export async function refreshSession(stored?: Session | null): Promise<Session |
     if (!session.user.appId) session.user.appId = base.user?.appId ?? '';
     saveSession(session);
     return session;
+  } catch (err) {
+    // 网络/网关瞬时故障：保留会话（延长 30s 让 UI 不立刻掉登录），下一次请求/定时器再续。
+    if (err instanceof TokenError && err.transient) {
+      const keep: Session = { ...base, expiresAt: Math.max(base.expiresAt, Date.now() + 30_000) };
+      saveSession(keep);
+      return keep;
+    }
+    clearSession();
+    return null;
+  }
+}
+
+/**
+ * 主动续期：剩余有效期 < 5 分钟时刷新。
+ * 供 App 定时器 / 页面重新可见时调用；无会话返回 null。
+ */
+export async function ensureFreshSession(): Promise<Session | null> {
+  if (AUTH_MODE === 'mock') return currentSession();
+  migrateLegacySession();
+  const raw = readStorage(SESSION_KEY);
+  if (!raw) return null;
+  let stored: Session;
+  try {
+    stored = JSON.parse(raw) as Session;
   } catch {
     clearSession();
     return null;
   }
+  if (!stored?.accessToken) return null;
+  if (stored.expiresAt === 0 || stored.expiresAt - Date.now() > 5 * 60_000) return stored;
+  return refreshSession(stored);
 }
 
 /** 退出登录：清空本地会话（不跳转，由调用方决定下一步）。 */

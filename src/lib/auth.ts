@@ -456,8 +456,52 @@ export async function ensureFreshSession(): Promise<Session | null> {
   return refreshSession(stored);
 }
 
-/** 退出登录：清空本地会话（不跳转，由调用方决定下一步）。 */
-export async function signOut(): Promise<void> {
+/** OAuth revoke 端点（与 token 同源：把 `/token` 换成 `/revoke`）。 */
+function oauthRevokeUrl(): string {
+  return OIDC.tokenUrl.replace(/\/token(\?.*)?$/, '/revoke');
+}
+
+/** 服务端吊销单个 token（fire-and-forget，3s 超时；失败不阻塞登出）。 */
+async function revokeToken(token: string, hint: 'access_token' | 'refresh_token'): Promise<void> {
+  if (!OIDC.clientId) return;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 3000);
+  try {
+    await fetch(oauthRevokeUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ token, token_type_hint: hint, client_id: OIDC.clientId }).toString(),
+      signal: controller.signal,
+      credentials: 'omit',
+      keepalive: true,
+    });
+  } catch {
+    /* 网络/超时忽略：本地会话仍会清除 */
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/**
+ * 退出登录：先尝试服务端吊销 refresh/access token（与其它门户一致），再清本地会话。
+ * `revoke:false` 用于 401 强制登出（token 已无效，避免无谓等待/噪声）。
+ */
+export async function signOut(options: { revoke?: boolean } = {}): Promise<void> {
+  if (AUTH_MODE === 'oidc' && options.revoke !== false) {
+    const raw = readStorage(SESSION_KEY);
+    let stored: Session | null = null;
+    try {
+      stored = raw ? (JSON.parse(raw) as Session) : null;
+    } catch {
+      stored = null;
+    }
+    if (stored) {
+      const tasks: Promise<void>[] = [];
+      if (stored.refreshToken) tasks.push(revokeToken(stored.refreshToken, 'refresh_token'));
+      if (stored.accessToken) tasks.push(revokeToken(stored.accessToken, 'access_token'));
+      if (tasks.length) await Promise.allSettled(tasks);
+    }
+  }
   clearSession();
   removeStorage(PKCE_KEY);
   if (AUTH_MODE === 'mock') writeStorage(MOCK_SIGNED_OUT_KEY, '1');

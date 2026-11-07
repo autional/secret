@@ -456,7 +456,7 @@ function Console() {
   /* 401 → 清会话 */
   useEffect(() => {
     const onUnauthorized = () => {
-      void signOut().then(() => {
+      void signOut({ revoke: false }).then(() => {
         clearScope();
         setSession(null);
         setSecrets([]);

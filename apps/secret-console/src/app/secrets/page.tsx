@@ -147,17 +147,23 @@ export default function SecretsPage() {
   }, [scopes, tenant]);
 
   const openDetail = useCallback(
-    async (key: string) => {
+    async (key: string, row?: { tenant_id?: string; app_id?: string }) => {
       setDetailLoading(true);
       setRevealed(null);
       setRevealError('');
       try {
         if (DATA_MODE !== 'api') {
-          const row = MOCK_SECRETS.find((item) => item.key === key) ?? null;
-          setDetail(row ? { ...row, versions: [] } : null);
+          const found = MOCK_SECRETS.find((item) => item.key === key) ?? null;
+          setDetail(found ? { ...found, versions: [] } : null);
           return;
         }
-        setDetail(await getSecretDetail(key, tenant ? { tenantId: tenant, appId: appId || undefined } : undefined));
+        // 平台级列表会跨租户：详情必须带**该行自己的**租户/应用作用域，
+        // 否则服务端按默认租户查不到 → 401「secret not found」。
+        const scopeTenant = row?.tenant_id || tenant;
+        const scope = scopeTenant
+          ? { tenantId: scopeTenant, appId: row?.app_id || appId || undefined }
+          : undefined;
+        setDetail(await getSecretDetail(key, scope));
       } catch (err) {
         message.error(err instanceof Error ? err.message : String(err));
       } finally {
@@ -221,7 +227,7 @@ export default function SecretsPage() {
         message.success(t('secrets.batchDone', { ok: res.succeeded?.length ?? 0, failed: res.errors?.length ?? 0 }));
       }
       setWrite(null);
-      if (detail) void openDetail(detail.key);
+      if (detail) void openDetail(detail.key, detail);
       await load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : String(err));
@@ -366,7 +372,7 @@ export default function SecretsPage() {
               dataIndex: 'key',
               width: '24%',
               render: (value: string, row: SecretItem) => (
-                <Button type="link" size="small" onClick={() => void openDetail(row.key)}>
+                <Button type="link" size="small" onClick={() => void openDetail(row.key, row)}>
                   <code className="font-mono text-xs">{value}</code>
                 </Button>
               ),
@@ -417,7 +423,7 @@ export default function SecretsPage() {
                           ]),
                     ],
                     onClick: ({ key }) => {
-                      if (key === 'view') void openDetail(row.key);
+                      if (key === 'view') void openDetail(row.key, row);
                       else if (key === 'rotate') setWrite({ mode: 'rotate', row });
                       else if (key === 'edit') setWrite({ mode: 'edit', row });
                       else if (key === 'revoke') setWrite({ mode: 'revoke', row });

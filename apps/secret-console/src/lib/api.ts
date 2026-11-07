@@ -141,11 +141,17 @@ async function send(base: string, path: string, options: RequestOptions): Promis
   }
 
   if (res.status === 401) {
+    const problem = await parseProblem(res);
+    // 管理面把「当前作用域查不到」也返 401（例如 30000001 secret not found）。
+    // 那不是会话失效：既不续期也不该把用户踢下线，直接交给调用方展示。
+    const domainMiss = String(problem?.code ?? '') === '30000001' || /not found/i.test(problem?.detail ?? '');
+    if (domainMiss) {
+      throw new ApiError(401, problemMessage(res, problem), problem?.code ?? 'not_found', problem?.detail ?? '');
+    }
     if (!retried && AUTH_MODE === 'oidc') {
       const renewed = await refreshSession();
       if (renewed) return send(base, path, { ...options, retried: true });
     }
-    const problem = await parseProblem(res);
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
     throw new ApiError(401, problemMessage(res, problem), problem?.code ?? 'unauthorized', problem?.detail ?? '');
   }

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, AutoComplete, App, Button, Card, Form, InputNumber, Space, Statistic, Tag, Typography } from 'antd';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AppPageHeader, SectionCard } from '@autional/ui';
+import { AppPageHeader } from '@autional/ui';
+import { PageSection } from '@/components/page-section';
 import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID, RUNTIME_MODE_LABEL } from '@/lib/config';
 import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, upsertSecretPolicy } from '@/lib/api';
 import type { SecretPolicy, SecretScope } from '@/lib/api';
@@ -146,7 +147,7 @@ export default function OverviewPage() {
       </div>
 
       <div className="mb-6 grid gap-4 xl:grid-cols-[3fr_2fr]">
-        <SectionCard title={t('overview.policyTitle')}>
+        <PageSection title={t('overview.policyTitle')}>
           <Space wrap className="mb-3">
             <Typography.Text type="secondary">{t('overview.selectTenant')}</Typography.Text>
             <AutoComplete
@@ -181,9 +182,9 @@ export default function OverviewPage() {
               <InputNumber min={1} max={10000} className="w-24" disabled={DATA_MODE !== 'api' || !tenant} />
             </Form.Item>
           </Form>
-        </SectionCard>
+        </PageSection>
 
-        <SectionCard title={t('overview.runtimeTitle')}>
+        <PageSection title={t('overview.runtimeTitle')}>
           <div className="space-y-2 text-sm text-[var(--color-text-secondary)]">
             <div className="flex items-center gap-2">
               <span>{t('overview.apiBase')}</span>
@@ -210,7 +211,7 @@ export default function OverviewPage() {
               {t('overview.platformTenant')}：<code className="font-mono text-xs">{PLATFORM_TENANT_ID}</code>
             </div>
           </div>
-        </SectionCard>
+        </PageSection>
       </div>
 
       <Alert type="info" showIcon title={t('overview.maskTitle')} description={t('overview.maskDescription')} />

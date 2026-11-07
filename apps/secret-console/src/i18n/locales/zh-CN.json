@@ -8,7 +8,7 @@
   "nav.closeMenu": "关闭菜单",
   "header.expand": "展开侧栏",
   "header.collapse": "收起侧栏",
-  "header.namespace": "ns: {{ns}}",
+  "header.namespace": "ns: {{namespace}}",
   "header.namespaceHint": "命名空间必须属于实例的 SECRET_NAMESPACES",
   "header.apiMode": "真实 API",
   "header.demoMode": "演示 · 只读",

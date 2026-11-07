@@ -167,9 +167,14 @@ function pickRoles(source: Record<string, unknown> | null): string[] {
 }
 
 function userFromClaims(claims: Record<string, unknown> | null, fallbackName: string): SessionUser {
-  const name = pickString(claims, 'name', 'preferred_username', 'nickname', 'email') || fallbackName;
+  const sub = pickString(claims, 'sub', 'user_id', 'userId');
+  // 展示名：name → preferred_username → nickname → email → sub 尾段。
+  // 之前缺省是「已登录用户」，顶栏出现「已 已登录用户」这种既重复又不提供身份的文案。
+  const name =
+    pickString(claims, 'name', 'preferred_username', 'nickname', 'email') ||
+    (sub ? `…${sub.slice(-6)}` : fallbackName);
   return {
-    sub: pickString(claims, 'sub', 'user_id', 'userId'),
+    sub,
     name,
     email: pickString(claims, 'email'),
     tenantId: pickString(claims, 'tenant_id', 'tenantId', 'tenant'),

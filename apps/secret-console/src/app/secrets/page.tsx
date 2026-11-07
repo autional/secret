@@ -3,7 +3,8 @@ import { Alert, App, Button, Input, Popconfirm, Select, Space, Tag, Typography }
 import { Plus } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AppPageHeader, SectionCard } from '@autional/ui';
+import { AppPageHeader } from '@autional/ui';
+import { PageSection } from '@/components/page-section';
 import { DataTable, Drawer } from '@autional/ui/antd';
 import { DATA_MODE } from '@/lib/config';
 import { useSession } from '@/hooks/use-session';
@@ -263,7 +264,7 @@ export default function SecretsPage() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select
           className="w-52"
-          value={tenant}
+          value={tenant || undefined}
           onChange={(value) => { setTenant(value ?? ''); setPage(1); }}
           allowClear
           placeholder={t('secrets.filterTenant')}
@@ -271,7 +272,7 @@ export default function SecretsPage() {
         />
         <Select
           className="w-48"
-          value={appId}
+          value={appId || undefined}
           onChange={(value) => { setAppId(value ?? ''); setPage(1); }}
           allowClear
           placeholder={t('secrets.filterApp')}
@@ -306,7 +307,7 @@ export default function SecretsPage() {
       {!canWrite ? <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} /> : null}
       {error ? <Alert className="mb-3" type="error" showIcon title={error} /> : null}
 
-      <SectionCard padding="none">
+      <PageSection >
         <DataTable
           size="small"
           rowKey="id"
@@ -330,7 +331,7 @@ export default function SecretsPage() {
             { title: t('secrets.col.updated'), dataIndex: 'updated_at', width: 180, render: (value: string) => (value ? new Date(value).toLocaleString() : '—') },
           ]}
         />
-      </SectionCard>
+      </PageSection>
 
       <Drawer open={!!detail} onClose={() => setDetail(null)} size="lg" title={detail?.key} loading={detailLoading}>
         {detail ? (

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Input, Tag } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { AppPageHeader, SectionCard } from '@autional/ui';
+import { AppPageHeader } from '@autional/ui';
+import { PageSection } from '@/components/page-section';
 import { DataTable, DateRangeFilter } from '@autional/ui/antd';
 import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { listAudit } from '@/lib/api';
@@ -80,7 +81,7 @@ export default function AuditPage() {
 
           {error ? <Alert className="mb-3" type="error" showIcon title={error} /> : null}
 
-          <SectionCard padding="none">
+          <PageSection >
             <DataTable
               size="small"
               rowKey="id"
@@ -102,7 +103,7 @@ export default function AuditPage() {
                 { title: t('audit.col.message'), dataIndex: 'message', ellipsis: true },
               ]}
             />
-          </SectionCard>
+          </PageSection>
         </>
       )}
     </>

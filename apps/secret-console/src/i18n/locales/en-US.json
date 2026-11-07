@@ -8,7 +8,7 @@
   "nav.closeMenu": "Close menu",
   "header.expand": "Expand sidebar",
   "header.collapse": "Collapse sidebar",
-  "header.namespace": "ns: {{ns}}",
+  "header.namespace": "ns: {{namespace}}",
   "header.namespaceHint": "The namespace must belong to the instance's SECRET_NAMESPACES",
   "header.apiMode": "Live API",
   "header.demoMode": "Demo · read-only",

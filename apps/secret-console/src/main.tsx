@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
-import { ThemeProvider } from '@autional/ui';
+import { ErrorBoundary, ThemeProvider } from '@autional/ui';
 import { AntdThemeProvider } from '@autional/ui/antd';
 import App from './App';
 import { legacyHashToPath } from './lib/legacy-hash';
@@ -18,9 +18,11 @@ if (root) {
     <StrictMode>
       <ThemeProvider storageKey="secret-console-theme">
         <AntdThemeProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
+          <ErrorBoundary>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </ErrorBoundary>
         </AntdThemeProvider>
       </ThemeProvider>
     </StrictMode>,

@@ -11,18 +11,15 @@ export default defineConfig({
   envDir: fileURLToPath(new URL('../../', import.meta.url)),
   server: { port: 13122 },
   preview: { port: 13122 },
+  /**
+   * 不做 manualChunks 按依赖拆包：2026-11-07 config 线上事故（commit 44305da）
+   * —— antd / rc-* / react 拆成独立 chunk 后触发跨 chunk 循环初始化
+   * （`antd-*.js` ReferenceError: Cannot access 'Pd' before initialization → 整页白屏）。
+   * 首屏优化另立方案，先保证单包可用。
+   */
   build: {
     outDir: 'dist',
     sourcemap: false,
-    chunkSizeWarningLimit: 1500,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router'],
-          'vendor-ui': ['antd', 'lucide-react'],
-          'vendor-i18n': ['i18next', 'react-i18next'],
-        },
-      },
-    },
+    chunkSizeWarningLimit: 1600,
   },
 });

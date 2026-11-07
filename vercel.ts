@@ -15,6 +15,35 @@ if (!rawOrigin) {
 
 const ORIGIN = rawOrigin.replace(/\/+$/, '');
 
+/** 安全响应头（与其它门户一致的最小集）。CSP 允许 antd 的内联样式；API 走同源 /bff。 */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://api.autional.com https://api.autional.cn",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  'upgrade-insecure-requests',
+].join('; ');
+
+const SECURITY_HEADERS = [
+  { key: 'Content-Security-Policy', value: CSP },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: 'geolocation=(), microphone=(), camera=()' },
+  { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+];
+
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+const NO_CACHE = 'public, max-age=0, must-revalidate';
+
 const spaFallback: Rewrite = {
   source: '/(.*)',
   destination: '/index.html',
@@ -26,6 +55,12 @@ export const config: VercelConfig = {
   installCommand: 'npm ci',
   buildCommand: 'npm run build',
   outputDirectory: 'dist',
+  headers: [
+    routes.header('/(.*)', SECURITY_HEADERS),
+    routes.header('/assets/(.*)', [{ key: 'Cache-Control', value: IMMUTABLE }]),
+    routes.header('/', [{ key: 'Cache-Control', value: NO_CACHE }]),
+    routes.header('/index.html', [{ key: 'Cache-Control', value: NO_CACHE }]),
+  ],
   rewrites: [
     routes.rewrite('/bff/:path*', `${ORIGIN}/bff/:path*`),
     routes.rewrite('/oauth/callback', '/index.html'),

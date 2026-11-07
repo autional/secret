@@ -30,10 +30,20 @@ PKCE `S256` + `state` + `nonce`；不使用 `client_secret`；剩余 < 5 分钟�
 ## 运行
 
 ```bash
-npm ci
-npm run dev      # http://localhost:13122
-npm run build    # tsc --noEmit + vite build → dist/
-npm run preview
+pnpm install
+pnpm dev         # http://localhost:13122
+pnpm build       # tsc --noEmit + vite build → apps/secret-console/dist/
+pnpm preview
+```
+
+目录结构（与 config / admin 同构）：
+
+```
+secret/
+├─ apps/secret-console/     控制台应用（Vite + React 19 + antd 6 + TS）
+│  └─ src/{app,components,hooks,i18n,lib,styles}
+├─ pnpm-workspace.yaml
+└─ vercel.ts                两区部署 + /bff 代理 + CSP 安全头
 ```
 
 ## 环境变量

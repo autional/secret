@@ -1,0 +1,40 @@
+{
+  "name": "@autional/secret-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "密钥中心控制台（密钥列表 / 审计）",
+  "scripts": {
+    "dev": "vite --port 13122",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 13122",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@autional/tailwind-preset": "0.1.0-rc.10",
+    "@autional/tokens": "0.1.0-rc.18",
+    "@autional/ui": "0.1.0-rc.56",
+    "antd": "6.5.0",
+    "dayjs": "1.11.23",
+    "i18next": "26.0.10",
+    "i18next-browser-languagedetector": "8.2.1",
+    "lucide-react": "0.509.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "react-i18next": "17.0.7",
+    "react-router": "7.15.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.4.0",
+    "autoprefixer": "10.5.0",
+    "postcss": "8.5.14",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.8.3",
+    "vite": "6.4.4",
+    "vitest": "3.2.0"
+  }
+}

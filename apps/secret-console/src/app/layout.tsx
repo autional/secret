@@ -7,6 +7,7 @@ import { AppShell, LanguageSwitcher, ThemeToggle, UserMenu } from '@autional/ui'
 import type { UserMenuItemSpec } from '@autional/ui';
 import { API_NAMESPACE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { useSession } from '@/hooks/use-session';
+import { useSessionActivity } from '@/hooks/use-session-activity';
 import { PortalMenu } from '@/components/portal-menu';
 import { LoginPage } from './login/page';
 
@@ -25,7 +26,9 @@ export default function Layout() {
   return <Shell session={session} onLogout={logout} />;
 }
 
-function Shell({ session, onLogout }: { session: ReturnType<typeof useSession>['session']; onLogout: () => Promise<void> }) {
+function Shell({ session, onLogout }: {
+  session: ReturnType<typeof useSession>['session']; onLogout: () => Promise<void> }) {
+  useSessionActivity(session);
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();

@@ -197,6 +197,15 @@ function saveSession(session: Session): void {
   writeStorage(SESSION_KEY, JSON.stringify(session));
 }
 
+/** 把用户资料合并进当前会话并落盘（用于 identity 补全展示名）。 */
+export function patchSessionUser(patch: Partial<SessionUser>): Session | null {
+  const current = currentSession();
+  if (!current) return null;
+  const next: Session = { ...current, user: { ...current.user, ...patch } };
+  saveSession(next);
+  return next;
+}
+
 function clearSession(): void {
   removeStorage(SESSION_KEY);
 }

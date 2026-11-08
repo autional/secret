@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { Session } from '@/lib/auth';
 
-/** 心跳端点：sid 取自 token，服务端只允许续「自己的」会话。 */
-const ACTIVITY_URL = '/bff/session/api/v1/sessions/me/activity';
+/**
+ * 心跳端点：走管理面前缀（网关已对该前缀做 admin 平面 + 角色粗筛）；
+ * sid 取自 token，服务端只允许续「自己的」会话。
+ */
+const ACTIVITY_URL = '/bff/session/api/v1/admin/sessions/me/activity';
 /** 心跳周期：idle 30 分钟的 1/6（业界常用 5 分钟）。 */
 const PING_INTERVAL = 5 * 60_000;
 /** 交互新鲜度：超过这个时间没交互，就不发心跳（人不在，让会话自然闲置过期）。 */

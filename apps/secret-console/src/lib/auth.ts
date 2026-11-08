@@ -451,6 +451,10 @@ async function doRefreshSession(stored?: Session | null): Promise<Session | null
       expiresAt: expiresAtFromToken(data.access_token as string, data.expires_in),
       user: userFromClaims(claims, base.user?.name || '已登录用户'),
     };
+    // identity 补全过的展示名不要被 token 里的 sub 尾段覆盖（每 5 分钟续期都会重建 user）。
+    if (session.user.name.startsWith('…') && base.user?.name && !base.user.name.startsWith('…')) {
+      session.user = { ...session.user, name: base.user.name, email: session.user.email || base.user.email };
+    }
     // 令牌内没有租户/应用声明时，保留上一轮已知值，避免 X-Tenant-ID 丢失。
     if (!session.user.tenantId) session.user.tenantId = base.user?.tenantId ?? '';
     if (!session.user.appId) session.user.appId = base.user?.appId ?? '';

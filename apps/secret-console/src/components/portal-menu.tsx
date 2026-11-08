@@ -14,6 +14,9 @@ import {
 } from '@/lib/portal';
 import type { PortalApplication } from '@/lib/portal';
 
+/** 控制台切换器只列同类控制台（与 admin/platform/security/user 一致）。 */
+const CONSOLE_PORTALS = new Set(['config', 'secret', 'admin', 'security', 'user', 'platform']);
+
 /**
  * 顶栏门户切换：目录来自平台 `tenant_applications`（不维护本地域名表）。
  *
@@ -61,6 +64,7 @@ export function PortalMenu({ session }: { session: Session | null }) {
           tenantId: sessionTenant,
           roles: session?.user.roles,
         })
+          .filter((item) => CONSOLE_PORTALS.has(item.code))
           .slice()
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         const hasOther = visible.some((item) => item.code !== CURRENT_PORTAL_CODE);

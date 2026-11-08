@@ -11,7 +11,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Compare live bundle SHA with HEAD
         run: |
@@ -22,6 +22,8 @@ jobs:
           ];
           const expected = process.env.GITHUB_SHA;
           const SHA_RE = /VITE_VERCEL_GIT_COMMIT_SHA:"([a-f0-9]{7,40})"/;
+          const ATTEMPTS = 20;
+          const DELAY_MS = 15_000;
 
           async function liveSha(url) {
             const html = await (await fetch(url)).text();
@@ -34,14 +36,26 @@ jobs:
           }
 
           (async () => {
-            let failed = 0;
-            for (const url of sites) {
-              const sha = await liveSha(url);
-              const ok = sha === expected;
-              if (!ok) failed += 1;
-              console.log(`${ok ? 'PASS' : 'FAIL'} ${url} live=${sha} head=${expected}`);
+            for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+              let failed = 0;
+              for (const url of sites) {
+                try {
+                  const sha = await liveSha(url);
+                  const ok = sha === expected;
+                  if (!ok) failed += 1;
+                  console.log(`${ok ? 'PASS' : 'WAIT'} ${url} live=${sha} head=${expected}`);
+                } catch (err) {
+                  failed += 1;
+                  console.log(`WAIT ${url} ${err.message}`);
+                }
+              }
+              if (!failed) process.exit(0);
+              if (attempt < ATTEMPTS) {
+                console.log(`deploy not ready (attempt ${attempt}/${ATTEMPTS}); retrying in ${DELAY_MS / 1000}s`);
+                await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+              }
             }
-            if (failed) process.exit(1);
+            process.exit(1);
           })().catch((err) => {
             console.error(err);
             process.exit(1);

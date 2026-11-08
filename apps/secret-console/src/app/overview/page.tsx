@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader } from '@autional/ui';
 import { PageSection } from '@/components/page-section';
-import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID, RUNTIME_MODE_LABEL } from '@/lib/config';
+import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, upsertSecretPolicy } from '@/lib/api';
 import type { SecretPolicy, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
@@ -206,7 +206,7 @@ export default function OverviewPage() {
               <code className="font-mono text-xs">{API_BASE}</code>
             </div>
             <div>
-              {t('overview.dataMode')}：{DATA_MODE === 'api' ? RUNTIME_MODE_LABEL : t('header.demoMode')} ·{' '}
+              {t('overview.dataMode')}：{DATA_MODE === 'api' ? t('header.apiMode') : t('header.demoMode')} ·{' '}
               {t('overview.authMode')}：{AUTH_MODE === 'oidc' ? 'OIDC + PKCE' : t('overview.mockAuth')}
             </div>
             <div>

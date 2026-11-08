@@ -7,6 +7,7 @@ import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { getTenant, getUser, listAudit, listTenants } from '@/lib/api';
 import type { AuditLogItem } from '@/lib/api';
 import { useSession } from '@/hooks/use-session';
+import i18n from '@/i18n';
 import { PageSection } from '@/components/page-section';
 
 const PAGE_SIZE = 20;
@@ -15,7 +16,7 @@ function fmtTime(value?: number | null): string {
   if (!value) return '—';
   const ms = value < 1e12 ? value * 1000 : value;
   const date = new Date(ms);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString(i18n.language === 'en-US' ? 'en-US' : 'zh-CN', { hour12: false });
 }
 
 export default function AuditPage() {

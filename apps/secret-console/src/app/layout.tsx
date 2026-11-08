@@ -123,13 +123,17 @@ function Shell({ session, onLogout }: {
       }
       headerRight={
         <>
+          {/* 顶栏条目在窄屏必须收敛：headerRight 是 shrink-0，全量保留会把顶栏撑出视口，
+              导致整页横向滚动、右侧头像被裁切（390px 实测）。 */}
           <Tooltip title={t('header.namespaceHint')}>
-            <Tag color="gold">{t('header.namespace', { namespace: API_NAMESPACE })}</Tag>
+            <Tag color="gold" className="hidden md:inline-flex">
+              {t('header.namespace', { namespace: API_NAMESPACE })}
+            </Tag>
           </Tooltip>
-          <Tag color={DATA_MODE === 'api' ? 'blue' : 'default'}>
+          <Tag color={DATA_MODE === 'api' ? 'blue' : 'default'} className="hidden sm:inline-flex">
             {DATA_MODE === 'api' ? t('header.apiMode') : t('header.demoMode')}
           </Tag>
-          {readOnly ? <Tag>{t('header.readOnly')}</Tag> : null}
+          {readOnly ? <Tag className="hidden lg:inline-flex">{t('header.readOnly')}</Tag> : null}
           <PortalMenu session={session} />
           <LanguageSwitcher />
           <ThemeToggle />

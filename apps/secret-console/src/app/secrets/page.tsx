@@ -22,6 +22,7 @@ import {
 import type { SecretDetail, SecretItem, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
 import { useSession } from '@/hooks/use-session';
+import i18n from '@/i18n';
 import { SecretWriteDialog } from '@/components/secret-write-dialog';
 import type { WriteState, WriteValues } from '@/components/secret-write-dialog';
 import { PageSection } from '@/components/page-section';
@@ -35,7 +36,7 @@ function fmtTime(value?: string | number | null): string {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('zh-CN', { hour12: false });
+  return date.toLocaleString(i18n.language === 'en-US' ? 'en-US' : 'zh-CN', { hour12: false });
 }
 
 export default function SecretsPage() {
@@ -173,11 +174,20 @@ export default function SecretsPage() {
     [tenant, appId, message],
   );
 
-  // 深链：/secrets?key=xxx 直接打开详情
+  // 深链：/secrets?key=xxx 直接打开详情。
+  // 平台门户/审计页跳转可能同时带 tenant/app（跨租户密钥不带就查不到，
+  // 服务端会按默认作用域返回 401「secret not found」）。
   useEffect(() => {
     const key = searchParams.get('key');
-    if (key) void openDetail(key);
-  }, [searchParams, openDetail]);
+    if (!key) return;
+    const linkTenant = searchParams.get('tenant') ?? searchParams.get('tenant_id') ?? '';
+    const linkApp = searchParams.get('app') ?? searchParams.get('app_id') ?? '';
+    if (linkTenant) setTenant(linkTenant);
+    if (linkApp) setAppId(linkApp);
+    void openDetail(key, linkTenant || linkApp ? { tenant_id: linkTenant, app_id: linkApp } : undefined);
+    // openDetail 会随 tenant/app 重建，但这里显式传 row，不依赖闭包里的筛选状态
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // 明文只在页面上停留 30 秒（与安全口径一致），关闭抽屉时也清掉
   useEffect(() => {

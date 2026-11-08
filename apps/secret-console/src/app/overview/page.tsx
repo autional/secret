@@ -38,16 +38,24 @@ export default function OverviewPage() {
       setScopes([...map.values()]);
       return;
     }
-    try {
+    const readStats = async () => {
       const [all, active, expired, revoked] = await Promise.all([
         listAllSecrets({ page: 1, page_size: 1 }),
         listAllSecrets({ status: 'active', page: 1, page_size: 1 }),
         listAllSecrets({ status: 'expired', page: 1, page_size: 1 }),
         listAllSecrets({ status: 'revoked', page: 1, page_size: 1 }),
       ]);
-      setStats({ total: all.total, active: active.total, expired: expired.total, revoked: revoked.total });
+      return { total: all.total, active: active.total, expired: expired.total, revoked: revoked.total };
+    };
+    try {
+      setStats(await readStats());
     } catch {
-      /* 统计失败不打断主流程 */
+      // 一次瞬时失败（网关抖动 / 令牌续期竞争）不该让统计永远停在 0：隔 1.5s 重试一次。
+      window.setTimeout(() => {
+        readStats()
+          .then(setStats)
+          .catch(() => undefined);
+      }, 1500);
     }
     try {
       setScopes(await listAllScopes());

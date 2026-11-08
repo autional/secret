@@ -8,10 +8,10 @@ import type { Session } from '@/lib/auth';
 const ACTIVITY_URL = '/bff/session/api/v1/admin/sessions/me/activity';
 /** 心跳周期：idle 30 分钟的 1/6（业界常用 5 分钟）。 */
 const PING_INTERVAL = 5 * 60_000;
+/** 检查节拍：每秒级太重，1 分钟一次足够（真正的间隔由 PING_INTERVAL 控制）。 */
+const TICK_INTERVAL = 60_000;
 /** 交互新鲜度：超过这个时间没交互，就不发心跳（人不在，让会话自然闲置过期）。 */
 const INTERACTION_FRESH = 5 * 60_000;
-/** 最小间隔：切前台等场景的补发也要节流。 */
-const MIN_GAP = 60_000;
 
 function sidFromToken(token: string): string {
   try {
@@ -38,8 +38,11 @@ export function useSessionActivity(session: Session | null, enabled = true): voi
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
+  // 依赖只放「有没有会话」：token 每 3 分钟刷新一次，若把它放进依赖，
+  // setInterval 会被反复重建，5 分钟的间隔永远到不了（心跳一次都不发）。
+  const hasSession = Boolean(session);
   useEffect(() => {
-    if (!enabled || !session) return;
+    if (!enabled || !hasSession) return;
 
     const markInteraction = () => {
       lastInteraction.current = Date.now();
@@ -53,7 +56,7 @@ export function useSessionActivity(session: Session | null, enabled = true): voi
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       const now = Date.now();
       if (now - lastInteraction.current > INTERACTION_FRESH) return;
-      if (now - lastPing.current < MIN_GAP) return;
+      if (now - lastPing.current < PING_INTERVAL) return;
       const sid = sidFromToken(current.accessToken);
       if (!sid) return;
 
@@ -67,7 +70,7 @@ export function useSessionActivity(session: Session | null, enabled = true): voi
       void fetch(ACTIVITY_URL, { method: 'POST', headers, credentials: 'omit' }).catch(() => undefined);
     };
 
-    const timer = window.setInterval(ping, PING_INTERVAL);
+    const timer = window.setInterval(ping, TICK_INTERVAL);
     const onVisible = () => {
       if (document.visibilityState === 'visible') ping();
     };
@@ -78,5 +81,5 @@ export function useSessionActivity(session: Session | null, enabled = true): voi
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [enabled, session?.accessToken]);
+  }, [enabled, hasSession]);
 }

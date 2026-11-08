@@ -1,0 +1,49 @@
+name: Live SHA
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Compare live bundle SHA with HEAD
+        run: |
+          node <<'NODE'
+          const sites = [
+            'https://secret.autional.com/',
+            'https://secret.autional.cn/',
+          ];
+          const expected = process.env.GITHUB_SHA;
+          const SHA_RE = /VITE_VERCEL_GIT_COMMIT_SHA:"([a-f0-9]{7,40})"/;
+
+          async function liveSha(url) {
+            const html = await (await fetch(url)).text();
+            const asset = html.match(/assets\/index-[^"']+\.js/)?.[0];
+            if (!asset) throw new Error(`no bundle asset: ${url}`);
+            const js = await (await fetch(new URL(asset, url))).text();
+            const sha = js.match(SHA_RE)?.[1];
+            if (!sha) throw new Error(`no SHA in bundle: ${url}`);
+            return sha;
+          }
+
+          (async () => {
+            let failed = 0;
+            for (const url of sites) {
+              const sha = await liveSha(url);
+              const ok = sha === expected;
+              if (!ok) failed += 1;
+              console.log(`${ok ? 'PASS' : 'FAIL'} ${url} live=${sha} head=${expected}`);
+            }
+            if (failed) process.exit(1);
+          })().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE

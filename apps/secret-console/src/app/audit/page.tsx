@@ -121,9 +121,14 @@ export default function AuditPage() {
       const next: Record<string, string> = {};
       for (const id of missing) {
         const row = rows.find((item) => item.operator_id === id);
-        let user = await getUser(id, { tenantId: PLATFORM_TENANT_ID });
         const tenantId = row?.tenant_id ?? '';
-        if (!user && tenantId) user = await getUser(id, { tenantId });
+        // 事件租户是真实租户（非 _system / 非平台）时先按事件租户查，
+        // 避免每个租户操作者都先打一次必然 404 的平台请求；平台/系统事件仍平台优先。
+        const tenantFirst = !!tenantId && tenantId !== '_system' && tenantId !== PLATFORM_TENANT_ID;
+        let user = tenantFirst ? await getUser(id, { tenantId }) : await getUser(id, { tenantId: PLATFORM_TENANT_ID });
+        if (!user) {
+          user = tenantFirst ? await getUser(id, { tenantId: PLATFORM_TENANT_ID }) : tenantId ? await getUser(id, { tenantId }) : null;
+        }
         if (user) next[id] = user.username || user.email || id;
       }
       if (alive && Object.keys(next).length) setUserNames((prev) => ({ ...prev, ...next }));

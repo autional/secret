@@ -1,4 +1,4 @@
-# secret.autional.com — admin console: not indexed (used after login; no public content).
+# secret.autional.{com,cn} — admin console: not indexed (used after login; no public content).
 # No Disallow: stay crawlable so search engines can read the robots noindex meta in index.html.
 User-agent: *
 Allow: /

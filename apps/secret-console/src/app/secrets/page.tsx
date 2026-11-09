@@ -175,8 +175,8 @@ export default function SecretsPage() {
   );
 
   // 深链：/secrets?key=xxx 直接打开详情。
-  // 平台门户/审计页跳转可能同时带 tenant/app（跨租户密钥不带就查不到，
-  // 服务端会按默认作用域返回 401「secret not found」）。
+  // 平台门户/审计页跳转可能同时带 tenant/app；老入口（如 config 站）只带 key，
+  // 此时按 key 在全平台列表里解析真实作用域，避免跨租户/_system 密钥按默认租户查 404。
   useEffect(() => {
     const key = searchParams.get('key');
     if (!key) return;
@@ -184,8 +184,38 @@ export default function SecretsPage() {
     const linkApp = searchParams.get('app') ?? searchParams.get('app_id') ?? '';
     if (linkTenant) setTenant(linkTenant);
     if (linkApp) setAppId(linkApp);
-    void openDetail(key, linkTenant || linkApp ? { tenant_id: linkTenant, app_id: linkApp } : undefined);
-    // openDetail 会随 tenant/app 重建，但这里显式传 row，不依赖闭包里的筛选状态
+    if (linkTenant || linkApp) {
+      void openDetail(key, { tenant_id: linkTenant, app_id: linkApp });
+      return;
+    }
+    if (DATA_MODE !== 'api') {
+      void openDetail(key);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    void (async () => {
+      try {
+        const res = await listAllSecrets({ prefix: key, page: 1, page_size: 20 });
+        const row = res.items.find((item) => item.key === key);
+        if (cancelled) return;
+        if (row) {
+          setTenant(row.tenant_id || PLATFORM_TENANT_ID);
+          setAppId(row.app_id || '');
+          await openDetail(key, row);
+        } else {
+          await openDetail(key);
+        }
+      } catch {
+        if (!cancelled) await openDetail(key);
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // openDetail 会随 tenant/app 重建，但这里显式传 row；避免把筛选状态作为依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 

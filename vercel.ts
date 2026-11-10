@@ -43,6 +43,12 @@ const SECURITY_HEADERS = [
 
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const NO_CACHE = 'public, max-age=0, must-revalidate';
+const HTML_CACHE_HEADERS = [
+  { key: 'Cache-Control', value: NO_CACHE },
+  // 防止 Vercel Edge 长时间缓存旧 index.html（旧 HTML 会引用已删除的旧 bundle → 404/白屏）。
+  { key: 'CDN-Cache-Control', value: 'no-store' },
+  { key: 'Vercel-CDN-Cache-Control', value: 'no-store' },
+];
 
 const spaFallback: Rewrite = {
   source: '/(.*)',
@@ -58,8 +64,11 @@ export const config: VercelConfig = {
   headers: [
     routes.header('/(.*)', SECURITY_HEADERS),
     routes.header('/assets/(.*)', [{ key: 'Cache-Control', value: IMMUTABLE }]),
-    routes.header('/', [{ key: 'Cache-Control', value: NO_CACHE }]),
-    routes.header('/index.html', [{ key: 'Cache-Control', value: NO_CACHE }]),
+    routes.header('/', HTML_CACHE_HEADERS),
+    routes.header('/index.html', HTML_CACHE_HEADERS),
+    routes.header('/secrets', HTML_CACHE_HEADERS),
+    routes.header('/audit', HTML_CACHE_HEADERS),
+    routes.header('/oauth/callback', HTML_CACHE_HEADERS),
   ],
   rewrites: [
     routes.rewrite('/bff/:path*', `${ORIGIN}/bff/:path*`),

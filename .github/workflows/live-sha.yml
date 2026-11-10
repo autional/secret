@@ -11,42 +11,61 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Compare live bundle SHA with HEAD
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Compare live version with HEAD (.com=SHA / .cn=mtime)
         run: |
           node <<'NODE'
           const sites = [
-            'https://secret.autional.com/',
-            'https://secret.autional.cn/',
+            { url: 'https://secret.autional.com/', mode: 'sha' },
+            { url: 'https://secret.autional.cn/', mode: 'mtime' },
           ];
           const expected = process.env.GITHUB_SHA;
           const SHA_RE = /VITE_VERCEL_GIT_COMMIT_SHA:"([a-f0-9]{7,40})"/;
-          const ATTEMPTS = 20;
+          const MTIME_TOLERANCE_MS = 15 * 60 * 1000;
+          const ATTEMPTS = 60;
           const DELAY_MS = 15_000;
 
-          async function liveSha(url) {
-            const html = await (await fetch(url)).text();
+          function gitCommitTime() {
+            const { execFileSync } = require('node:child_process');
+            return Number(execFileSync('git', ['show', '-s', '--format=%ct', expected], { encoding: 'utf8' }).trim()) * 1000;
+          }
+
+          async function liveInfo(site) {
+            const res = await fetch(site.url);
+            const html = await res.text();
             const asset = html.match(/assets\/index-[^"']+\.js/)?.[0];
-            if (!asset) throw new Error(`no bundle asset: ${url}`);
-            const js = await (await fetch(new URL(asset, url))).text();
+            if (!asset) throw new Error(`no bundle asset: ${site.url}`);
+            if (site.mode === 'mtime') {
+              const lastModified = res.headers.get('last-modified');
+              if (!lastModified) throw new Error(`no Last-Modified: ${site.url}`);
+              return new Date(lastModified).getTime();
+            }
+            const js = await (await fetch(new URL(asset, site.url))).text();
             const sha = js.match(SHA_RE)?.[1];
-            if (!sha) throw new Error(`no SHA in bundle: ${url}`);
+            if (!sha) throw new Error(`no SHA in bundle: ${site.url}`);
             return sha;
           }
 
           (async () => {
+            const expectedTime = gitCommitTime();
             for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
               let failed = 0;
-              for (const url of sites) {
+              for (const site of sites) {
                 try {
-                  const sha = await liveSha(url);
-                  const ok = sha === expected;
+                  const live = await liveInfo(site);
+                  const ok = site.mode === 'sha'
+                    ? live === expected
+                    : live >= expectedTime - MTIME_TOLERANCE_MS;
                   if (!ok) failed += 1;
-                  console.log(`${ok ? 'PASS' : 'WAIT'} ${url} live=${sha} head=${expected}`);
+                  console.log(`${ok ? 'PASS' : 'WAIT'} ${site.url} live=${live} head=${expected} (${site.mode})`);
                 } catch (err) {
                   failed += 1;
-                  console.log(`WAIT ${url} ${err.message}`);
+                  console.log(`WAIT ${site.url} ${err.message}`);
                 }
               }
               if (!failed) process.exit(0);

@@ -1,5 +1,10 @@
 # 密钥中心控制台（Secret Center）
 
+> 🚨 **2026-11-10 托管变更**：`*.autional.cn` **已迁出 Vercel** —— 改为 mf01 构建（node:24-alpine + 钉版 pnpm）→ 香港自建托管。
+> `.cn` 的构建 env 由 workspace `shared/infra-ops/sites/sites.manifest.json` 注入；push 后由 mf01 cron（约 10 分钟）构建发布，不经 Vercel。
+> `*.autional.com` 仍在 Vercel —— 本文中涉及 Vercel 的构建/部署描述对 `.com` 仍然成立。
+> 现行口径：workspace `docs/AUTIONAL-CN-SITES-SELF-HOST.md`。
+
 **仓库**：`autional/secret`（public）
 **域名**：[secret.autional.com](https://secret.autional.com) · [secret.autional.cn](https://secret.autional.cn)
 **Vercel**：`secret`（com，`API_ORIGIN=https://api.autional.com`）· `cn-secret`（cn，`API_ORIGIN=https://api.autional.cn`）
@@ -105,9 +110,9 @@ secret/
 
 ## 部署
 
-`main` 推送 → Vercel 自动部署。`vercel.ts` 要求 `API_ORIGIN`，未设置时构建 **fail-closed**。
+`main` 推送 → `.com` 由 Vercel 自动部署；`.cn` 由 mf01 cron 构建发布。`vercel.ts` 要求 `API_ORIGIN`，未设置时构建 **fail-closed**。
 
-Vercel 环境变量（生产 / 预览 / 开发）：
+构建期环境变量（`.com` 由 Vercel 项目注入；`.cn` 由 `shared/infra-ops/sites/sites.manifest.json` 注入）：
 
 ```
 API_ORIGIN=https://api.autional.com        # cn 项目 = https://api.autional.cn

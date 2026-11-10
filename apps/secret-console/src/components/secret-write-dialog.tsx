@@ -23,6 +23,8 @@ export function SecretWriteDialog(props: {
   state: WriteState | null;
   submitting: boolean;
   tenantOptions: Array<{ value: string; label: string }>;
+  /** 租户模式：租户固定为当前租户，字段禁用，避免越权输入。 */
+  tenantFixed?: string;
   appOptions: Array<{ value: string; label: string }>;
   onCancel: () => void;
   onSubmit: (values: WriteValues) => void;
@@ -39,11 +41,11 @@ export function SecretWriteDialog(props: {
     setConfirmText('');
     form.resetFields();
     form.setFieldsValue({
-      tenant_id: state.row?.tenant_id ?? '',
+      tenant_id: state.row?.tenant_id ?? props.tenantFixed ?? '',
       app_id: state.row?.app_id ?? '',
       description: state.row?.description ?? '',
     });
-  }, [state, form]);
+  }, [state, form, props.tenantFixed]);
 
   const confirmTarget =
     mode === 'revoke' || mode === 'delete'
@@ -74,6 +76,7 @@ export function SecretWriteDialog(props: {
           <>
             <Form.Item name="tenant_id" label={t('secrets.col.tenant')} rules={[{ required: true, message: t('secrets.tenantRequired') }]}>
               <AutoComplete
+                disabled={!!props.tenantFixed}
                 placeholder={t('secrets.tenantPlaceholder')}
                 options={props.tenantOptions}
                 filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}

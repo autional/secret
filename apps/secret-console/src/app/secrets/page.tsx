@@ -14,6 +14,8 @@ import {
   getSecretDetail,
   listAllScopes,
   listAllSecrets,
+  listAppScopes,
+  listSecrets,
   revealSecretVersion,
   revokeSecret,
   rotateSecret,
@@ -37,6 +39,24 @@ function fmtTime(value?: string | number | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString(i18n.language === 'en-US' ? 'en-US' : 'zh-CN', { hour12: false });
+}
+
+/** 与表格 rowKey 一致；批量操作按 tenant/app 分组发请求（batch 端点只接受单个作用域）。 */
+function rowKeyOf(row: SecretItem): string {
+  return `${row.tenant_id ?? ''}/${row.app_id ?? ''}/${row.key}`;
+}
+
+function groupByScope(rows: SecretItem[]): Array<{ tenantId: string; appId?: string; keys: string[] }> {
+  const map = new Map<string, { tenantId: string; appId?: string; keys: string[] }>();
+  for (const row of rows) {
+    const tenantId = row.tenant_id || '';
+    const appId = row.app_id || undefined;
+    const key = `${tenantId}|${appId ?? ''}`;
+    const group = map.get(key) ?? { tenantId, appId, keys: [] };
+    group.keys.push(row.key);
+    map.set(key, group);
+  }
+  return [...map.values()];
 }
 
 export default function SecretsPage() {
@@ -76,8 +96,14 @@ export default function SecretsPage() {
   }, [session]);
   const canWrite = DATA_MODE === 'api' && !readOnly;
   const isPlatformSession = session?.user.tenantId === PLATFORM_TENANT_ID;
+  const tenantId = session?.user.tenantId ?? '';
+  const selectedRows = useMemo(() => {
+    const wanted = new Set(selected);
+    return rows.filter((row) => wanted.has(rowKeyOf(row)));
+  }, [selected, rows]);
 
   const load = useCallback(async () => {
+    if (DATA_MODE === 'api' && !session) return;
     if (DATA_MODE !== 'api') {
       const filtered = MOCK_SECRETS.filter(
         (row) =>
@@ -94,14 +120,24 @@ export default function SecretsPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await listAllSecrets({
-        tenant_id: tenant || undefined,
-        app_id: appId || undefined,
-        prefix: prefix || undefined,
-        status: status === 'all' ? undefined : status,
-        page,
-        page_size: pageSize,
-      });
+      const res = isPlatformSession
+        ? await listAllSecrets({
+            tenant_id: tenant || undefined,
+            app_id: appId || undefined,
+            prefix: prefix || undefined,
+            status: status === 'all' ? undefined : status,
+            page,
+            page_size: pageSize,
+          })
+        : await listSecrets(
+            {
+              prefix: prefix || undefined,
+              status: status === 'all' ? undefined : status,
+              page,
+              page_size: pageSize,
+            },
+            { tenantId, appId: appId || undefined },
+          );
       setRows(res.items);
       setTotal(res.total);
       setSelected([]);
@@ -112,13 +148,14 @@ export default function SecretsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tenant, appId, prefix, status, page, pageSize]);
+  }, [tenant, appId, prefix, status, page, pageSize, isPlatformSession, tenantId, session]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
+    if (DATA_MODE === 'api' && !session) return;
     if (DATA_MODE !== 'api') {
       const map = new Map<string, SecretScope>();
       for (const row of MOCK_SECRETS) {
@@ -130,17 +167,26 @@ export default function SecretsPage() {
       setScopes([...map.values()]);
       return;
     }
-    listAllScopes()
-      .then(setScopes)
+    if (isPlatformSession) {
+      listAllScopes()
+        .then(setScopes)
+        .catch(() => setScopes([]));
+      return;
+    }
+    listAppScopes()
+      .then((rows) => setScopes(rows.map((row) => ({ tenant_id: tenantId, app_id: row.app_id, secret_count: row.secret_count }))))
       .catch(() => setScopes([]));
-  }, []);
+  }, [isPlatformSession, tenantId, session]);
 
   const tenantOptions = useMemo(() => {
+    if (!isPlatformSession) {
+      return tenantId ? [{ value: tenantId, label: tenantId }] : [];
+    }
     const set = new Set(scopes.map((row) => row.tenant_id || '_system'));
     set.add(PLATFORM_TENANT_ID);
     set.add('_system');
     return [...set].sort().map((value) => ({ value, label: value }));
-  }, [scopes]);
+  }, [scopes, isPlatformSession, tenantId]);
 
   const appOptions = useMemo(() => {
     const set = new Set(scopes.filter((row) => !tenant || row.tenant_id === tenant).map((row) => row.app_id || ''));
@@ -158,9 +204,9 @@ export default function SecretsPage() {
           setDetail(found ? { ...found, versions: [] } : null);
           return;
         }
-        // 平台级列表会跨租户：详情必须带**该行自己的**租户/应用作用域，
-        // 否则服务端按默认租户查不到 → 401「secret not found」。
-        const scopeTenant = row?.tenant_id || tenant;
+        // 平台级列表会跨租户：详情必须带**该行自己的**租户/应用作用域；
+        // 租户模式强制自己的租户，避免 query 参数越权（服务端仍会兜底 403）。
+        const scopeTenant = isPlatformSession ? row?.tenant_id || tenant : tenantId;
         const scope = scopeTenant
           ? { tenantId: scopeTenant, appId: row?.app_id || appId || undefined }
           : undefined;
@@ -171,43 +217,93 @@ export default function SecretsPage() {
         setDetailLoading(false);
       }
     },
-    [tenant, appId, message],
+    [tenant, appId, message, isPlatformSession, tenantId],
   );
 
   // 深链：/secrets?key=xxx 直接打开详情。
-  // 平台门户/审计页跳转可能同时带 tenant/app；老入口（如 config 站）只带 key，
-  // 此时按 key 在全平台列表里解析真实作用域，避免跨租户/_system 密钥按默认租户查 404。
+  // 平台：可带 tenant/app；只带 key 时按 /all?prefix= 解析真实作用域。
+  // 租户：强制本租户；只带 key 时先查本租户全局行，再逐 app 作用域探测。
   useEffect(() => {
     const key = searchParams.get('key');
     if (!key) return;
-    const linkTenant = searchParams.get('tenant') ?? searchParams.get('tenant_id') ?? '';
-    const linkApp = searchParams.get('app') ?? searchParams.get('app_id') ?? '';
-    if (linkTenant) setTenant(linkTenant);
-    if (linkApp) setAppId(linkApp);
-    if (linkTenant || linkApp) {
-      void openDetail(key, { tenant_id: linkTenant, app_id: linkApp });
-      return;
-    }
+    if (DATA_MODE === 'api' && !session) return;
+    const qTenant = searchParams.get('tenant') ?? searchParams.get('tenant_id') ?? '';
+    const qApp = searchParams.get('app') ?? searchParams.get('app_id') ?? '';
+
     if (DATA_MODE !== 'api') {
       void openDetail(key);
+      return;
+    }
+
+    if (isPlatformSession) {
+      if (qTenant) setTenant(qTenant);
+      if (qApp) setAppId(qApp);
+      if (qTenant || qApp) {
+        void openDetail(key, { tenant_id: qTenant, app_id: qApp });
+        return;
+      }
+      let cancelled = false;
+      setDetailLoading(true);
+      void (async () => {
+        try {
+          const res = await listAllSecrets({ prefix: key, page: 1, page_size: 20 });
+          const row = res.items.find((item) => item.key === key);
+          if (cancelled) return;
+          if (row) {
+            setTenant(row.tenant_id || PLATFORM_TENANT_ID);
+            setAppId(row.app_id || '');
+            await openDetail(key, row);
+          } else {
+            await openDetail(key);
+          }
+        } catch {
+          if (!cancelled) await openDetail(key);
+        } finally {
+          if (!cancelled) setDetailLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // 租户模式：忽略外部 tenant，只允许本租户
+    if (!tenantId) {
+      void openDetail(key);
+      return;
+    }
+    if (qApp) {
+      setAppId(qApp);
+      void openDetail(key, { tenant_id: tenantId, app_id: qApp });
       return;
     }
     let cancelled = false;
     setDetailLoading(true);
     void (async () => {
       try {
-        const res = await listAllSecrets({ prefix: key, page: 1, page_size: 20 });
+        const res = await listSecrets({ prefix: key, page: 1, page_size: 20 }, { tenantId });
         const row = res.items.find((item) => item.key === key);
         if (cancelled) return;
         if (row) {
-          setTenant(row.tenant_id || PLATFORM_TENANT_ID);
           setAppId(row.app_id || '');
           await openDetail(key, row);
-        } else {
-          await openDetail(key);
+          return;
         }
+        const apps = await listAppScopes().catch(() => []);
+        for (const app of apps) {
+          try {
+            const d = await getSecretDetail(key, { tenantId, appId: app.app_id || undefined });
+            if (cancelled) return;
+            setAppId(app.app_id || '');
+            setDetail(d);
+            return;
+          } catch {
+            /* 尝试下一个 app 作用域 */
+          }
+        }
+        if (!cancelled) await openDetail(key, { tenant_id: tenantId });
       } catch {
-        if (!cancelled) await openDetail(key);
+        if (!cancelled) await openDetail(key, { tenant_id: tenantId });
       } finally {
         if (!cancelled) setDetailLoading(false);
       }
@@ -217,7 +313,7 @@ export default function SecretsPage() {
     };
     // openDetail 会随 tenant/app 重建，但这里显式传 row；避免把筛选状态作为依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, isPlatformSession, tenantId, session]);
 
   // 明文只在页面上停留 30 秒（与安全口径一致），关闭抽屉时也清掉
   useEffect(() => {
@@ -260,11 +356,23 @@ export default function SecretsPage() {
         await deleteSecret(write.row.key, reason, scopeOf(write.row));
         message.success(t('secrets.deleted'));
       } else if (write.mode === 'batch-revoke' && write.keys) {
-        const res = await batchRevokeSecrets(write.keys, reason);
-        message.success(t('secrets.batchDone', { ok: res.succeeded?.length ?? 0, failed: res.errors?.length ?? 0 }));
+        let ok = 0;
+        let failed = 0;
+        for (const group of groupByScope(selectedRows)) {
+          const res = await batchRevokeSecrets(group.keys, reason, { tenantId: group.tenantId, appId: group.appId });
+          ok += res.succeeded?.length ?? 0;
+          failed += res.errors?.length ?? 0;
+        }
+        message.success(t('secrets.batchDone', { ok, failed }));
       } else if (write.mode === 'batch-delete' && write.keys) {
-        const res = await batchDeleteSecrets(write.keys, reason);
-        message.success(t('secrets.batchDone', { ok: res.succeeded?.length ?? 0, failed: res.errors?.length ?? 0 }));
+        let ok = 0;
+        let failed = 0;
+        for (const group of groupByScope(selectedRows)) {
+          const res = await batchDeleteSecrets(group.keys, reason, { tenantId: group.tenantId, appId: group.appId });
+          ok += res.succeeded?.length ?? 0;
+          failed += res.errors?.length ?? 0;
+        }
+        message.success(t('secrets.batchDone', { ok, failed }));
       }
       setWrite(null);
       if (detail) void openDetail(detail.key, detail);
@@ -294,8 +402,8 @@ export default function SecretsPage() {
   return (
     <>
       <AppPageHeader
-        title={t('secrets.title')}
-        description={t('secrets.description')}
+        title={isPlatformSession ? t('secrets.title') : t('secrets.tenantTitle')}
+        description={isPlatformSession ? t('secrets.description') : t('secrets.tenantDescription')}
         actions={
           <Space size={8} wrap>
             {readOnly ? <Tag>{t('header.readOnly')}</Tag> : null}
@@ -319,16 +427,18 @@ export default function SecretsPage() {
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select
-          className="w-64"
-          allowClear
-          showSearch
-          value={tenant || undefined}
-          onChange={(value) => { setTenant(value ?? ''); setPage(1); }}
-          placeholder={t('secrets.filterTenant')}
-          options={tenantOptions}
-          optionFilterProp="label"
-        />
+        {isPlatformSession ? (
+          <Select
+            className="w-64"
+            allowClear
+            showSearch
+            value={tenant || undefined}
+            onChange={(value) => { setTenant(value ?? ''); setPage(1); }}
+            placeholder={t('secrets.filterTenant')}
+            options={tenantOptions}
+            optionFilterProp="label"
+          />
+        ) : null}
         <Select
           className="w-56"
           allowClear
@@ -366,10 +476,10 @@ export default function SecretsPage() {
       {DATA_MODE === 'api' ? (
         <Alert
           className="mb-3"
-          type={isPlatformSession ? 'info' : 'warning'}
+          type="info"
           showIcon
-          title={isPlatformSession ? t('secrets.scopePlatform') : t('secrets.scopeTenant')}
-          description={isPlatformSession ? t('secrets.scopePlatformHint') : t('secrets.scopeTenantHint')}
+          title={isPlatformSession ? t('secrets.scopePlatform') : t('secrets.scopeTenantSelf')}
+          description={isPlatformSession ? t('secrets.scopePlatformHint') : t('secrets.scopeTenantSelfHint')}
         />
       ) : (
         <Alert className="mb-3" type="info" showIcon title={t('secrets.demoHint')} />
@@ -388,7 +498,7 @@ export default function SecretsPage() {
       <PageSection>
         <DataTable
           size="small"
-          rowKey={(row) => `${row.tenant_id ?? ''}/${row.app_id ?? ''}/${row.key}`}
+          rowKey={(row) => rowKeyOf(row)}
           dataSource={rows}
           loading={loading}
           scroll={{ x: 'max-content' }}
@@ -417,13 +527,17 @@ export default function SecretsPage() {
                 </Button>
               ),
             },
-            {
-              title: t('secrets.col.tenant'),
-              dataIndex: 'tenant_id',
-              width: 230,
-              ellipsis: true,
-              render: (value?: string) => <code className="font-mono text-xs">{value || '—'}</code>,
-            },
+            ...(isPlatformSession
+              ? [
+                  {
+                    title: t('secrets.col.tenant'),
+                    dataIndex: 'tenant_id',
+                    width: 230,
+                    ellipsis: true,
+                    render: (value?: string) => <code className="font-mono text-xs">{value || '—'}</code>,
+                  },
+                ]
+              : []),
             {
               title: t('secrets.col.app'),
               dataIndex: 'app_id',
@@ -595,6 +709,7 @@ export default function SecretsPage() {
         state={write}
         submitting={submitting}
         tenantOptions={tenantOptions}
+        tenantFixed={isPlatformSession ? undefined : tenantId}
         appOptions={appOptions}
         onCancel={() => setWrite(null)}
         onSubmit={(values) => void submitWrite(values)}

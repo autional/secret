@@ -5,13 +5,17 @@ import { useTranslation } from 'react-i18next';
 import { AppPageHeader } from '@autional/ui';
 import { PageSection } from '@/components/page-section';
 import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
-import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, upsertSecretPolicy } from '@/lib/api';
+import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, listSecrets, upsertSecretPolicy } from '@/lib/api';
 import type { SecretPolicy, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
+import { useSession } from '@/hooks/use-session';
 
 export default function OverviewPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
+  const { session } = useSession();
+  const isPlatformSession = session?.user.tenantId === PLATFORM_TENANT_ID;
+  const tenantId = session?.user.tenantId ?? '';
   const [stats, setStats] = useState({ total: 0, active: 0, expired: 0, revoked: 0 });
   const [scopes, setScopes] = useState<SecretScope[]>([]);
   const [tenant, setTenant] = useState('');
@@ -22,7 +26,13 @@ export default function OverviewPage() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
+  // 租户模式：策略作用域固定为本租户
+  useEffect(() => {
+    if (!isPlatformSession && tenantId) setTenant(tenantId);
+  }, [isPlatformSession, tenantId]);
+
   const load = useCallback(async () => {
+    if (DATA_MODE === 'api' && !session) return;
     if (DATA_MODE !== 'api') {
       const active = MOCK_SECRETS.filter((row) => row.status === 'active').length;
       const expired = MOCK_SECRETS.filter((row) => row.status === 'expired').length;
@@ -38,12 +48,13 @@ export default function OverviewPage() {
       setScopes([...map.values()]);
       return;
     }
+    const scope = isPlatformSession ? undefined : { tenantId };
     const readStats = async () => {
       const [all, active, expired, revoked] = await Promise.all([
-        listAllSecrets({ page: 1, page_size: 1 }),
-        listAllSecrets({ status: 'active', page: 1, page_size: 1 }),
-        listAllSecrets({ status: 'expired', page: 1, page_size: 1 }),
-        listAllSecrets({ status: 'revoked', page: 1, page_size: 1 }),
+        isPlatformSession ? listAllSecrets({ page: 1, page_size: 1 }) : listSecrets({ page: 1, page_size: 1 }, scope),
+        isPlatformSession ? listAllSecrets({ status: 'active', page: 1, page_size: 1 }) : listSecrets({ status: 'active', page: 1, page_size: 1 }, scope),
+        isPlatformSession ? listAllSecrets({ status: 'expired', page: 1, page_size: 1 }) : listSecrets({ status: 'expired', page: 1, page_size: 1 }, scope),
+        isPlatformSession ? listAllSecrets({ status: 'revoked', page: 1, page_size: 1 }) : listSecrets({ status: 'revoked', page: 1, page_size: 1 }, scope),
       ]);
       return { total: all.total, active: active.total, expired: expired.total, revoked: revoked.total };
     };
@@ -57,9 +68,13 @@ export default function OverviewPage() {
           .catch(() => undefined);
       }, 1500);
     }
-    try {
-      setScopes(await listAllScopes());
-    } catch {
+    if (isPlatformSession) {
+      try {
+        setScopes(await listAllScopes());
+      } catch {
+        setScopes([]);
+      }
+    } else {
       setScopes([]);
     }
     try {
@@ -70,7 +85,7 @@ export default function OverviewPage() {
     checkApi()
       .then((res) => setHealth({ ok: res.ok, message: res.message }))
       .catch(() => setHealth({ ok: false, message: t('overview.healthFailed') }));
-  }, []);
+  }, [isPlatformSession, tenantId, t, session]);
 
   useEffect(() => {
     void load();
@@ -96,13 +111,14 @@ export default function OverviewPage() {
   }, [policy, form]);
 
   const tenantOptions = useMemo(() => {
+    if (!isPlatformSession) return [];
     const map = new Map<string, number>();
     for (const row of scopes) {
       const key = row.tenant_id || t('overview.emptyScope');
       map.set(key, (map.get(key) ?? 0) + (row.secret_count ?? 0));
     }
     return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: `${value} (${count})` }));
-  }, [scopes, t]);
+  }, [scopes, t, isPlatformSession]);
 
   const savePolicy = async () => {
     const values = await form.validateFields();
@@ -136,8 +152,8 @@ export default function OverviewPage() {
   return (
     <>
       <AppPageHeader
-        title={t('overview.title')}
-        description={t('overview.description')}
+        title={isPlatformSession ? t('overview.title') : t('overview.tenantTitle')}
+        description={isPlatformSession ? t('overview.description') : t('overview.tenantDescription')}
         actions={
           <Link to="/secrets">
             <Button type="primary">{t('overview.openList')}</Button>
@@ -148,25 +164,34 @@ export default function OverviewPage() {
       <div className="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
         {cards.map((card) => (
           <Card key={card.key} size="small">
-            <Statistic title={card.label} value={card.value} valueStyle={card.color ? { color: card.color } : undefined} />
+            <Statistic title={card.label} value={card.value} styles={card.color ? { content: { color: card.color } } : undefined} />
             {card.hint ? <div className="mt-1 text-xs text-[var(--color-text-secondary)]">{card.hint}</div> : null}
           </Card>
         ))}
       </div>
 
       <div className="mb-6 grid gap-4 xl:grid-cols-[3fr_2fr]">
-        <PageSection title={t('overview.policyTitle')}>
+        <PageSection title={isPlatformSession ? t('overview.policyTitle') : t('overview.tenantPolicyTitle')}>
           <Space wrap className="mb-3">
-            <Typography.Text type="secondary">{t('overview.selectTenant')}</Typography.Text>
-            <AutoComplete
-              className="w-80"
-              placeholder={t('overview.tenantPlaceholder')}
-              value={tenant}
-              options={tenantOptions}
-              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
-              onChange={setTenant}
-              allowClear
-            />
+            {isPlatformSession ? (
+              <>
+                <Typography.Text type="secondary">{t('overview.selectTenant')}</Typography.Text>
+                <AutoComplete
+                  className="w-80"
+                  placeholder={t('overview.tenantPlaceholder')}
+                  value={tenant}
+                  options={tenantOptions}
+                  filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+                  onChange={setTenant}
+                  allowClear
+                />
+              </>
+            ) : (
+              <>
+                <Typography.Text type="secondary">{t('overview.currentTenant')}</Typography.Text>
+                <Tag color="blue">{tenantId || '—'}</Tag>
+              </>
+            )}
             <Button
               type="primary"
               size="small"
@@ -216,7 +241,8 @@ export default function OverviewPage() {
               {t('overview.encryptionKey')}：<code className="font-mono text-xs">{encryptionKey || '—'}</code>
             </div>
             <div>
-              {t('overview.platformTenant')}：<code className="font-mono text-xs">{PLATFORM_TENANT_ID}</code>
+              {isPlatformSession ? t('overview.platformTenant') : t('overview.currentTenant')}：
+              <code className="font-mono text-xs">{isPlatformSession ? PLATFORM_TENANT_ID : tenantId || '—'}</code>
             </div>
           </div>
         </PageSection>

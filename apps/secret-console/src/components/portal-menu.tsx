@@ -43,9 +43,11 @@ export function PortalMenu({ session }: { session: Session | null }) {
     void (async () => {
       try {
         const sessionTenant = session?.user.tenantId || PLATFORM_TENANT_ID;
-        // 目录是「平台门户注册表」：先按平台租户取全量，失败再用会话租户兜底。
-        // 之前只查会话租户，导致非平台上下文里可选门户明显偏少。
-        const candidates = [...new Set([PLATFORM_TENANT_ID, sessionTenant])];
+        // 目录是「平台门户注册表」：平台会话先按平台租户取全量；租户会话先按本租户，
+        // 避免每次都先打一次必然 403 的平台请求（浏览器控制台噪声）。
+        const candidates = [...new Set(
+          sessionTenant === PLATFORM_TENANT_ID ? [PLATFORM_TENANT_ID] : [sessionTenant, PLATFORM_TENANT_ID],
+        )];
         let rows: PortalApplication[] = [];
         let lastError: unknown = null;
         for (const tenantId of candidates) {

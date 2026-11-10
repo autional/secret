@@ -13,7 +13,7 @@
  * 必须携带 `X-Change-Reason`（服务端写审计 `version_read`），前端只展示 30 秒。
  */
 import { currentSession, refreshSession } from './auth';
-import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE, IDENTITY_BASE, TENANT_BASE } from './config';
+import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE, IDENTITY_BASE, PLATFORM_TENANT_ID, TENANT_BASE } from './config';
 import { resolveScope } from './scope';
 
 /** 管理面错误（统一携带 HTTP 状态与业务错误码，便于 UI 分流 401/403/503/400）。 */
@@ -226,9 +226,10 @@ export type ListSecretsQuery = {
   page_size?: number;
 };
 
-/** 列表（只读）：返回密钥元数据，不含任何密钥值。 */
-export async function listSecrets(query: ListSecretsQuery = {}): Promise<{ items: SecretItem[]; total: number }> {
-  const res = await request<ListEnvelope<SecretItem>>(API_BASE, '', { query: { ...query } });
+/** 列表（只读）：返回密钥元数据，不含任何密钥值。
+ *  scope 用于租户模式按行/按应用过滤（缺省取当前会话作用域）。 */
+export async function listSecrets(query: ListSecretsQuery = {}, scope?: ScopeOverride): Promise<{ items: SecretItem[]; total: number }> {
+  const res = await request<ListEnvelope<SecretItem>>(API_BASE, '', { query: { ...query }, scope });
   return { items: res?.items ?? res?.data ?? [], total: res?.total ?? 0 };
 }
 
@@ -518,12 +519,21 @@ export async function listAudit(query: ListAuditQuery = {}): Promise<{ items: Au
 export type ApiHealth = { ok: boolean; mode: 'mock' | 'api'; message: string };
 
 export async function checkApi(): Promise<ApiHealth> {
-  if (AUTH_MODE === 'oidc' && !currentSession()?.accessToken) {
+  const session = currentSession();
+  if (AUTH_MODE === 'oidc' && !session?.accessToken) {
     return { ok: false, mode: 'api', message: '未登录：未检测 API' };
   }
   try {
-    const { total } = await listAllSecrets({ page: 1, page_size: 1 });
-    return { ok: true, mode: 'api', message: `已连通 ${API_BASE}（全平台共 ${total} 条）` };
+    const tenantId = session?.user.tenantId ?? '';
+    const platform = !tenantId || tenantId === PLATFORM_TENANT_ID;
+    const { total } = platform
+      ? await listAllSecrets({ page: 1, page_size: 1 })
+      : await listSecrets({ page: 1, page_size: 1 }, { tenantId });
+    return {
+      ok: true,
+      mode: 'api',
+      message: platform ? `已连通 ${API_BASE}（全平台共 ${total} 条）` : `已连通 ${API_BASE}（本租户共 ${total} 条）`,
+    };
   } catch (err) {
     return { ok: false, mode: 'api', message: `${API_BASE} 不可达：${err instanceof Error ? err.message : String(err)}` };
   }

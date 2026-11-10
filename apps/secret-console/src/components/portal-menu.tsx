@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PortalSwitcher } from '@autional/ui';
 import type { PortalLink } from '@autional/ui';
+import { isConsolePortal } from '@autional/shared/portal';
 import type { Session } from '@/lib/auth';
 import {
   CURRENT_PORTAL_CODE,
@@ -14,8 +15,8 @@ import {
 } from '@/lib/portal';
 import type { PortalApplication } from '@/lib/portal';
 
-/** 控制台切换器只列同类控制台（与 admin/platform/security/user 一致）。 */
-const CONSOLE_PORTALS = new Set(['config', 'secret', 'admin', 'security', 'user', 'platform']);
+/** 控制台切换器只列同类控制台 —— 清单来自 `@autional/shared/portal` 注册表（`isConsolePortal`），
+ *  零运行时依赖（该模块无 import）。 */
 
 /**
  * 顶栏门户切换：目录来自平台 `tenant_applications`（不维护本地域名表）。
@@ -66,7 +67,7 @@ export function PortalMenu({ session }: { session: Session | null }) {
           tenantId: sessionTenant,
           roles: session?.user.roles,
         })
-          .filter((item) => CONSOLE_PORTALS.has(item.code))
+          .filter((item) => isConsolePortal(item.code))
           .slice()
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         const hasOther = visible.some((item) => item.code !== CURRENT_PORTAL_CODE);

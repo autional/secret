@@ -11,17 +11,22 @@
  */
 import { TENANT_BASE } from './config';
 
+import {
+  ADMIN_PLANE_ROLES as SHARED_ADMIN_PLANE_ROLES,
+  getSwitcherExcludedCodes,
+} from '@autional/shared/portal';
+
 /** 平台租户 well-known ULID（service-core base/constant TenantPlatformID，全环境同值）。 */
 export const PLATFORM_TENANT_ID = '01KSQCBNVMS6SX64PJS937CE33';
 
 /** 当前门户 code：目录中命中它就标「当前」。 */
 export const CURRENT_PORTAL_CODE = 'secret';
 
-/** 与平台 DEFAULT_EXCLUDE 一致：非桌面切换目标。 */
-const EXCLUDED_PORTAL_CODES: readonly string[] = ['auth', 'landing', 'authenticator'];
+/** 非桌面切换目标 —— 取自 `@autional/shared/portal` 注册表（inSwitcher === false）。 */
+const EXCLUDED_PORTAL_CODES: readonly string[] = getSwitcherExcludedCodes();
 
-/** 管理面平面角色集（admin / security / secret 门户的入口门禁同集）。 */
-const ADMIN_PLANE_ROLES: readonly string[] = ['super_admin', 'admin', 'security_admin', 'user_manager'];
+/** 管理面平面角色集 —— 取自 `@autional/shared/portal`（单一真源）。 */
+const ADMIN_PLANE_ROLES: readonly string[] = SHARED_ADMIN_PLANE_ROLES;
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const TWO_PART_TLDS = new Set(['com.cn', 'co.uk', 'co.jp', 'com.au', 'co.nz']);

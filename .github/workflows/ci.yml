@@ -30,5 +30,8 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Portal literals（门户清单单一真源）
+        run: pnpm --filter @autional/secret-console exec autional-check-portal-literals --root .
+
       - name: Typecheck + build
         run: pnpm build

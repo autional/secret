@@ -58,3 +58,7 @@ jobs:
 
       - name: E2E smoke (mock mode)
         run: pnpm --filter @autional/secret-console test:e2e
+
+      # 认证流程：本地假 OIDC 提供方，真验 PKCE(state/nonce/换票/落会话/刷新恢复)
+      - name: E2E auth (fake OIDC)
+        run: pnpm --filter @autional/secret-console test:e2e:auth

@@ -7,6 +7,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.authe2e
 .vercel
 
 # Playwright 产物（与 config 同构）

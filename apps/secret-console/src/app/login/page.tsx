@@ -1,11 +1,14 @@
 import { Alert, Button } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { DATA_MODE, OIDC } from '@/lib/config';
+import { AUTH_MODE, OIDC } from '@/lib/config';
 
 /** 登录页：mock 模式给「演示账号」，oidc 模式走授权码 + PKCE（由 lib/auth 发起）。 */
 export function LoginPage({ error, onLogin }: { error: string; onLogin: () => void }) {
   const { t } = useTranslation();
-  const mock = DATA_MODE === 'mock';
+  // 按钮文案要跟着**实际动作**走：AUTH_MODE（怎么登录），不是 DATA_MODE（数据从哪来）。
+  // 之前按 DATA_MODE 判：VITE_DATA_MODE=mock + VITE_AUTH_MODE=oidc 时按钮写「演示账号」，
+  // 点下去却跳真 OIDC 授权页 —— 文案与行为不符。
+  const mock = AUTH_MODE === 'mock';
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-muted)] p-6">

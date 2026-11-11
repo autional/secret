@@ -124,7 +124,8 @@ export function useSession() {
   // 令牌失效（401）：清会话，回到登录态
   useEffect(() => {
     const onUnauthorized = () => {
-      void signOut().then(() => setSession(null));
+      // 401 强制登出：令牌已失效，吊销只会白等 2 个请求（各 3s 超时），直接清本地。
+      void signOut({ revoke: false }).then(() => setSession(null));
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);

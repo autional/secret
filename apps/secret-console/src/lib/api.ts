@@ -12,6 +12,7 @@
  * 安全口径：列表/详情只返回元数据与版本号；明文读取走 `POST /versions/value`，
  * 必须携带 `X-Change-Reason`（服务端写审计 `version_read`），前端只展示 30 秒。
  */
+import { createFetchClient, FetchApiError } from '@autional/shared/fetch';
 import { currentSession, refreshSession } from './auth';
 import { API_BASE, API_NAMESPACE, AUDIT_BASE, AUTH_MODE, IDENTITY_BASE, PLATFORM_TENANT_ID, TENANT_BASE } from './config';
 import { resolveScope } from './scope';
@@ -69,98 +70,86 @@ function scopeHeaders(override?: ScopeOverride): Record<string, string> {
   return headers;
 }
 
-function buildUrl(base: string, path: string, query?: Record<string, QueryValue>): string {
-  const url = new URL(`${base}${path}`, window.location.origin);
-  if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value === undefined || value === null || value === '') continue;
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
-}
-
-async function parseProblem(res: Response): Promise<ProblemBody> {
-  try {
-    return (await res.json()) as ProblemBody;
-  } catch {
-    return null;
-  }
-}
-
-function problemMessage(res: Response, problem: ProblemBody): string {
+function problemMessage(status: number, problem: ProblemBody): string {
   const detail = problem?.detail || problem?.message || problem?.title;
-  if (detail) return `${detail}（HTTP ${res.status}${problem?.code ? ` · ${problem.code}` : ''}）`;
-  if (res.status === 400) return '请求参数不合法（HTTP 400）：常见原因是 X-Namespace 不属于实例 SECRET_NAMESPACES';
-  if (res.status === 401) return '未登录或登录已过期（HTTP 401）';
-  if (res.status === 403) return '无权限：密钥管理面需要 secret:admin（HTTP 403）';
-  if (res.status === 404) return '资源不存在（HTTP 404）';
-  if (res.status === 409) return '版本冲突，请刷新后重试（HTTP 409）';
-  if (res.status === 503) return '服务暂不可用（HTTP 503）';
-  return `请求失败（HTTP ${res.status}）`;
+  if (detail) return `${detail}（HTTP ${status}${problem?.code ? ` · ${problem.code}` : ''}）`;
+  if (status === 400) return '请求参数不合法（HTTP 400）：常见原因是 X-Namespace 不属于实例 SECRET_NAMESPACES';
+  if (status === 401) return '未登录或登录已过期（HTTP 401）';
+  if (status === 403) return '无权限：密钥管理面需要 secret:admin（HTTP 403）';
+  if (status === 404) return '资源不存在（HTTP 404）';
+  if (status === 409) return '版本冲突，请刷新后重试（HTTP 409）';
+  if (status === 503) return '服务暂不可用（HTTP 503）';
+  return `请求失败（HTTP ${status}）`;
+}
+
+/**
+ * 传输层 = `@autional/shared` 的 `createFetchClient`（与各门户同一套实现）：
+ * 作用域头、超时、RFC7807 归一、401 一次静默续期；本站只保留自己的错误类型与文案。
+ *
+ * 本站特有语义（**不要改**）：管理面把「当前作用域查不到」也返 401（`30000001 secret not found`），
+ * 那不是会话失效 —— 既不续期，也不派发 `UNAUTHORIZED_EVENT`（不把用户踢下线），直接交给调用方展示。
+ */
+function isDomainMiss(error: FetchApiError): boolean {
+  return error.code === '30000001' || /not found/i.test(error.detail ?? '');
+}
+
+const clients = new Map<string, ReturnType<typeof createFetchClient>>();
+
+function clientFor(base: string) {
+  const cached = clients.get(base);
+  if (cached) return cached;
+  const client = createFetchClient({
+    baseUrl: base,
+    getToken: () => currentSession()?.accessToken ?? null,
+    // 作用域头（X-Tenant-ID / X-App-ID / X-Namespace）含未登录时的兜底值，与迁移前一致
+    getHeaders: () => scopeHeaders(),
+    onUnauthorized: (error) => {
+      if (isDomainMiss(error)) return;
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    },
+    refresh: (error) => {
+      if (isDomainMiss(error) || AUTH_MODE !== 'oidc') return Promise.resolve(null);
+      return refreshSession().then((session) => session?.accessToken ?? null);
+    },
+    timeoutMs: 20_000,
+  });
+  clients.set(base, client);
+  return client;
+}
+
+/** FetchApiError → 本站 ApiError（保留既有文案与业务码）。 */
+function toApiError(error: unknown): ApiError {
+  if (!(error instanceof FetchApiError)) {
+    return new ApiError(0, (error as Error)?.message || '请求失败');
+  }
+  if (error.code === 'timeout') return new ApiError(0, error.message);
+  if (error.code === 'aborted') return new ApiError(0, '请求已取消');
+  if (error.code === 'network_error') return new ApiError(0, `无法连接服务：${error.detail || error.message}`);
+  const problem = (error.body && typeof error.body === 'object' ? error.body : null) as ProblemBody;
+  if (error.status === 401) {
+    const domainMiss =
+      String(problem?.code ?? error.code ?? '') === '30000001' || /not found/i.test(problem?.detail ?? '');
+    return new ApiError(
+      401,
+      problemMessage(401, problem),
+      problem?.code ?? (domainMiss ? 'not_found' : 'unauthorized'),
+      problem?.detail ?? '',
+    );
+  }
+  return new ApiError(error.status, problemMessage(error.status, problem), problem?.code ?? '', problem?.detail ?? '');
 }
 
 /** 统一请求入口：带作用域头、可被 401 触发一次静默续期、错误归一为 ApiError。 */
 export async function request<T>(base: string, path: string, options: RequestOptions = {}): Promise<T> {
-  const res = await send(base, path, options);
-  if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  if (!text) return undefined as T;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw new ApiError(res.status, '响应不是合法 JSON');
-  }
-}
-
-async function send(base: string, path: string, options: RequestOptions): Promise<Response> {
-  const { method = 'GET', query, body, changeReason, retried = false, timeoutMs = 20_000 } = options;
-  const headers: Record<string, string> = { Accept: 'application/json', ...scopeHeaders(options.scope) };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const { method = 'GET', query, body, scope, changeReason, timeoutMs } = options;
+  const headers: Record<string, string> = { ...scopeHeaders(scope) };
   if (changeReason) headers['X-Change-Reason'] = changeReason;
-
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
   try {
-    res = await fetch(buildUrl(base, path, query), {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-      credentials: 'omit',
-    });
-  } catch (cause) {
-    const aborted = (cause as Error)?.name === 'AbortError';
-    throw new ApiError(
-      0,
-      aborted ? `请求超时（${timeoutMs / 1000}s）` : `无法连接服务：${(cause as Error).message}`,
-    );
-  } finally {
-    window.clearTimeout(timer);
+    const data = await clientFor(base).request<T | null>(path, { method, query, body, timeoutMs, headers });
+    return (data ?? undefined) as T;
+  } catch (error) {
+    throw toApiError(error);
   }
-
-  if (res.status === 401) {
-    const problem = await parseProblem(res);
-    // 管理面把「当前作用域查不到」也返 401（例如 30000001 secret not found）。
-    // 那不是会话失效：既不续期也不该把用户踢下线，直接交给调用方展示。
-    const domainMiss = String(problem?.code ?? '') === '30000001' || /not found/i.test(problem?.detail ?? '');
-    if (domainMiss) {
-      throw new ApiError(401, problemMessage(res, problem), problem?.code ?? 'not_found', problem?.detail ?? '');
-    }
-    if (!retried && AUTH_MODE === 'oidc') {
-      const renewed = await refreshSession();
-      if (renewed) return send(base, path, { ...options, retried: true });
-    }
-    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    throw new ApiError(401, problemMessage(res, problem), problem?.code ?? 'unauthorized', problem?.detail ?? '');
-  }
-
-  if (!res.ok) {
-    const problem = await parseProblem(res);
-    throw new ApiError(res.status, problemMessage(res, problem), problem?.code ?? '', problem?.detail ?? '');
-  }
-  return res;
 }
 
 /* ------------------------------- 响应形状 ------------------------------- */

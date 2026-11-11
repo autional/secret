@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@autional/shared": "0.1.0-rc.62",
+    "@autional/shared": "0.1.0-rc.63",
     "@autional/tailwind-preset": "0.1.0-rc.10",
     "@autional/tokens": "0.1.0-rc.18",
     "@autional/ui": "0.1.0-rc.56",

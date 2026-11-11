@@ -13,6 +13,8 @@
  *   - state 不匹配直接判失败（防 CSRF / 授权码注入）；
  *   - id_token 的 nonce 与本地保存值不一致同样判失败（防重放）。
  */
+import { decodeJwtPayload as decodeJwtPayloadShared } from '@autional/shared/jwt';
+import { generatePKCE } from '@autional/shared/pkce';
 import { APP_ID, AUTH_MODE, OIDC, TENANT_ID } from './config';
 
 export type SessionUser = {
@@ -123,28 +125,11 @@ function randomToken(byteLength = 32): string {
 }
 
 /** PKCE S256 challenge = base64url(sha256(verifier))。 */
-async function challengeOf(verifier: string): Promise<string> {
-  if (!window.crypto?.subtle) {
-    throw new Error('当前环境不支持 WebCrypto（PKCE 需要 HTTPS 或 localhost）');
-  }
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
-  return b64url(new Uint8Array(digest));
-}
 
 /** 解出 JWT / id_token 的 payload（不验签：签名校验在后端，前端只取展示用声明）。 */
 function decodeJwtPayload(token?: string): Record<string, unknown> | null {
-  if (!token) return null;
-  const part = token.split('.')[1];
-  if (!part) return null;
-  try {
-    const padded = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
-    const binary = atob(padded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  // 统一走 `@autional/shared/jwt`：base64url 先归一再 atob（裸 atob 会抛并被误判「已过期」，PL-70）
+  return token ? decodeJwtPayloadShared(token) : null;
 }
 
 function pickString(source: Record<string, unknown> | null, ...keys: string[]): string {
@@ -302,7 +287,8 @@ export async function startLogin(): Promise<Session | null> {
     throw new Error('缺少 VITE_OIDC_CLIENT_ID：请先在 OAuth 客户端登记回调地址并配置客户端 ID');
   }
 
-  const verifier = randomToken(48); // 64 字符 base64url，落在 RFC 7636 的 43–128 区间
+  // PKCE 由 shared 统一生成（verifier 43–128 字符，challenge = base64url(sha256(verifier))）
+  const { verifier, challenge } = await generatePKCE();
   const state = randomToken(16);
   const nonce = randomToken(16);
   const redirectUri = OIDC.redirectUri;
@@ -316,7 +302,7 @@ export async function startLogin(): Promise<Session | null> {
   url.searchParams.set('scope', OIDC.scope);
   url.searchParams.set('state', state);
   url.searchParams.set('nonce', nonce);
-  url.searchParams.set('code_challenge', await challengeOf(verifier));
+  url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
 
   window.location.assign(url.toString());

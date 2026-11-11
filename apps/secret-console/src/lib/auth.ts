@@ -17,6 +17,7 @@ import { decodeJwtPayload as decodeJwtPayloadShared } from '@autional/shared/jwt
 import { generatePKCE } from '@autional/shared/pkce';
 import {
   expiresAtFromToken as expiresAtFromTokenShared,
+  mergeTokenClaims,
   pickClaimString,
   sessionExpiryAt,
   userFromClaims,
@@ -337,7 +338,7 @@ export async function completeLogin(search: string = window.location.search): Pr
     }),
   );
 
-  const claims = decodeJwtPayload(data.id_token) ?? decodeJwtPayload(data.access_token);
+  const claims = mergeTokenClaims(data.access_token, data.id_token);
   const nonceClaim = pickClaimString(claims, 'nonce');
   if (nonceClaim && nonceClaim !== pkce.nonce) {
     removeStorage(PKCE_KEY);
@@ -394,7 +395,7 @@ async function doRefreshSession(stored?: Session | null): Promise<Session | null
         client_id: OIDC.clientId,
       }),
     );
-    const claims = decodeJwtPayload(data.id_token) ?? decodeJwtPayload(data.access_token);
+    const claims = mergeTokenClaims(data.access_token, data.id_token);
     const session: Session = {
       mode: 'oidc',
       accessToken: data.access_token as string,

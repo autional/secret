@@ -8,3 +8,7 @@ dist/
 .env.*
 !.env.example
 .vercel
+
+# Playwright 产物（与 config 同构）
+apps/secret-console/test-results/
+apps/secret-console/playwright-report/

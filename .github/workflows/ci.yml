@@ -36,6 +36,10 @@ jobs:
       - name: Typecheck + build
         run: pnpm build
 
+      # 无障碍闸门（AC C-28 / ui-denominator U4）：jsx-a11y recommended，0 error/warn 才算过。
+      - name: A11y lint
+        run: pnpm --filter @autional/secret-console run lint:a11y
+
   e2e:
     runs-on: ubuntu-latest
     steps:

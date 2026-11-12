@@ -37,7 +37,6 @@ export function ReasonModal(props: {
         rows={3}
         maxLength={200}
         showCount
-        autoFocus
         value={reason}
         onChange={(event) => setReason(event.target.value)}
         placeholder={t('reason.placeholder')}

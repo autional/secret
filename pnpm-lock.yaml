@@ -23,8 +23,8 @@ importers:
   apps/secret-console:
     dependencies:
       '@autional/shared':
-        specifier: 0.1.0-rc.67
-        version: 0.1.0-rc.67(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))
+        specifier: 0.1.0-rc.69
+        version: 0.1.0-rc.69(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))
       '@autional/tailwind-preset':
         specifier: 0.1.0-rc.10
         version: 0.1.0-rc.10(tailwindcss@3.4.19)
@@ -32,8 +32,8 @@ importers:
         specifier: 0.1.0-rc.18
         version: 0.1.0-rc.18
       '@autional/ui':
-        specifier: 0.1.0-rc.56
-        version: 0.1.0-rc.56(@autional/tokens@0.1.0-rc.18)(antd@6.5.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(dayjs@1.11.23)(i18next@26.0.10(typescript@5.8.3))(lucide-react@0.509.0(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react-i18next@17.0.7(i18next@26.0.10(typescript@5.8.3))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3))(react-router@7.15.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react@19.2.5)
+        specifier: 0.1.0-rc.59
+        version: 0.1.0-rc.59(@autional/tokens@0.1.0-rc.18)(antd@6.5.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(dayjs@1.11.23)(i18next@26.0.10(typescript@5.8.3))(lucide-react@0.509.0(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react-i18next@17.0.7(i18next@26.0.10(typescript@5.8.3))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3))(react-router@7.15.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react@19.2.5)
       antd:
         specifier: 6.5.0
         version: 6.5.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -146,8 +146,8 @@ packages:
       react: 19.2.5
       react-dom: 19.2.5
 
-  '@autional/shared@0.1.0-rc.67':
-    resolution: {integrity: sha512-1nb6d2sdL2n1sPWhUwjOixqZ6KnO0QlJ/2w2UfmSZv3wUzSBfpPjbHwIorbH5RuOI3wRAdQtdZMs2YZh/gnICQ==}
+  '@autional/shared@0.1.0-rc.69':
+    resolution: {integrity: sha512-n9UHYGF66vtx3YTi/1WIus/hrfWpAbO0lI3iBgPTL0b6Ge8SsWbFbeN0sb/0UvIqOhq8bF63mppZUrVGzWBGPQ==}
     hasBin: true
     peerDependencies:
       react: 19.2.5
@@ -164,8 +164,8 @@ packages:
   '@autional/tokens@0.1.0-rc.18':
     resolution: {integrity: sha512-zNBZ9s6j04p7SSFi83UepIUAbKAgALpxRnXfrxahTqoZIHf1gavJw32L8IS74JZo+Pxdjnx0LOuYfiEktUfOQQ==}
 
-  '@autional/ui@0.1.0-rc.56':
-    resolution: {integrity: sha512-xNXhNDydCaUer6W6TScUx8SIiagAT1DLPsxa2ptN3kVFyB+LBJtYv0PBQLfJ+z/rhTiK6qyo+Kc6Mm0Dasmsrw==}
+  '@autional/ui@0.1.0-rc.59':
+    resolution: {integrity: sha512-DcribQEQMrDJVL9ipTVRN4dJorzq9RgrVjZvoTgpdexXGVP1YAQK5OxLvHN5bxZgKsgFph/bUFPHC2kbcvIB1Q==}
     peerDependencies:
       '@autional/tokens': '>=0.1.0-rc'
       antd: '>=6.0.0'
@@ -2561,7 +2561,7 @@ snapshots:
       react-dom: 19.2.5(react@19.2.5)
       throttle-debounce: 5.0.2
 
-  '@autional/shared@0.1.0-rc.67(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))':
+  '@autional/shared@0.1.0-rc.69(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@tanstack/react-query': 5.100.9(react@19.2.5)
@@ -2588,7 +2588,7 @@ snapshots:
 
   '@autional/tokens@0.1.0-rc.18': {}
 
-  '@autional/ui@0.1.0-rc.56(@autional/tokens@0.1.0-rc.18)(antd@6.5.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(dayjs@1.11.23)(i18next@26.0.10(typescript@5.8.3))(lucide-react@0.509.0(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react-i18next@17.0.7(i18next@26.0.10(typescript@5.8.3))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3))(react-router@7.15.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react@19.2.5)':
+  '@autional/ui@0.1.0-rc.59(@autional/tokens@0.1.0-rc.18)(antd@6.5.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(dayjs@1.11.23)(i18next@26.0.10(typescript@5.8.3))(lucide-react@0.509.0(react@19.2.5))(react-dom@19.2.5(react@19.2.5))(react-i18next@17.0.7(i18next@26.0.10(typescript@5.8.3))(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.8.3))(react-router@7.15.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(react@19.2.5)':
     dependencies:
       '@autional/tokens': 0.1.0-rc.18
       i18next: 26.0.10(typescript@5.8.3)

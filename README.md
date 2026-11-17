@@ -26,10 +26,12 @@
 - 密钥**明文默认不读**：列表与详情只返回元数据与版本号；查看明文需 `secret:admin` 权限、填写原因（写入审计 `version_read`），前端展示 30 秒后自动隐藏。
 - 令牌存 **localStorage**（与 platform/admin/security 一致：刷新、新标签、跨页保持登录；退出/失效即清）；
 PKCE `S256` + `state` + `nonce`；不使用 `client_secret`；剩余 < 5 分钟自动 refresh（单飞，401 亦会重试）；退出登录会调用 oauth `/revoke` 吊销 refresh/access token。
-- 写操作可选「变更原因」：
-  - 创建 / 改描述会写入 `metadata.change_reason`；
-  - 所有写操作同时发送 `X-Change-Reason` 头，服务端写入审计 metadata；
-  - 长度上限 512 字符（服务端截断）。
+- 写操作**必须**填写「变更原因」（1–200 字，弹窗内强制校验；空/纯空白不提交）：
+  - 所有写操作发送 `X-Change-Reason` 头，服务端写入审计 metadata；
+  - 仅**创建**额外写 `metadata.change_reason`（首次写入，无覆盖风险）；
+  - **改描述（update）绝不发送 `metadata`**：服务端 metadata 是**整块替换**，带了会把该密钥其它
+    metadata 键清空（P0 数据丢失修复，2026-11）；
+  - 策略保存同样先填原因再 PUT `/policy`。
 - 角色：`super_admin` / `admin` 可读写；`security_admin` 只读（读 `secret:read`、写 403）。令牌未带 roles 时按钮不隐藏，由服务端兜底。
 
 ## 运行

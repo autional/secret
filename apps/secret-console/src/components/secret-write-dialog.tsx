@@ -157,8 +157,14 @@ export function SecretWriteDialog(props: {
           </Form.Item>
         ) : null}
 
-        <Form.Item name="reason" label={t('secrets.reasonLabel')} extra={t('secrets.reasonExtra')}>
-          <Input placeholder={t('reason.placeholder')} />
+        {/* 写操作口径：变更原因必填（全部模式）——服务端写审计事件用 X-Change-Reason。 */}
+        <Form.Item
+          name="reason"
+          label={t('secrets.reasonLabel')}
+          rules={[{ required: true, whitespace: true, max: 200, message: t('secrets.reasonRequired') }]}
+          extra={t('secrets.reasonExtra')}
+        >
+          <Input maxLength={200} showCount placeholder={t('reason.placeholder')} />
         </Form.Item>
       </Form>
     </Modal>

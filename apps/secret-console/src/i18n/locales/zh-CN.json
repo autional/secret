@@ -172,8 +172,8 @@
   "secrets.keyMax": "最多 512 字符",
   "secrets.listError": "读取密钥列表失败",
   "secrets.newValue": "新密钥值",
-  "secrets.reasonExtra": "写入审计事件 metadata.change_reason。",
-  "secrets.reasonLabel": "变更原因（可选）",
+  "secrets.reasonExtra": "写操作必填，随 X-Change-Reason 发送并写入审计事件。",
+  "secrets.reasonLabel": "变更原因",
   "secrets.revealReasonPlaceholder": "例如：排障需要核对历史版本",
   "secrets.revealWarn": "查看明文会写入审计（version_read），展示 30 秒后自动隐藏。",
   "secrets.revokeWarn": "吊销后无法再获取该密钥值",
@@ -191,5 +191,8 @@
   "sidebar.tenant": "租户",
   "sidebar.platformTenant": "平台",
   "sidebar.roles": "角色",
-  "sidebar.namespace": "命名空间"
+  "sidebar.namespace": "命名空间",
+  "secrets.reasonRequired": "请填写变更原因（1–200 字）",
+  "overview.policyReasonHint": "保存策略会写入审计，请填写变更原因（随 X-Change-Reason 发送）。",
+  "overview.healthSkipped": "未选租户"
 }

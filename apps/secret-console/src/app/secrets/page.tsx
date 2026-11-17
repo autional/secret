@@ -327,6 +327,11 @@ export default function SecretsPage() {
   const submitWrite = async (values: WriteValues) => {
     if (!write) return;
     const reason = String(values.reason ?? '').trim();
+    // 口径：写必须有原因（表单已强制，这里兜底，绝不把空原因发给后端）。
+    if (!reason) {
+      message.error(t('secrets.reasonRequired'));
+      return;
+    }
     setSubmitting(true);
     try {
       if (write.mode === 'create') {

@@ -56,7 +56,7 @@ export type RequestOptions = {
   query?: Record<string, QueryValue>;
   /** JSON 请求体（POST/PUT 用） */
   body?: unknown;
-  /** 变更原因：当前服务端未落库（波 2 接入审计），先透传头便于网关/审计侧采集。 */
+  /** 变更原因：写操作必填（前端表单强制），走 `X-Change-Reason`，服务端写审计事件。 */
   changeReason?: string;
   /** 内部用：401 后已重试过一次 */
   retried?: boolean;
@@ -293,13 +293,19 @@ export async function createSecret(input: CreateSecretInput, scope?: ScopeOverri
 
 export type UpdateSecretInput = { description?: string; reason?: string };
 
-/** 只更新元信息（描述 / metadata），不改变密钥值。 */
+/**
+ * 只更新元信息（描述），不改变密钥值。
+ *
+ * ⚠️ **不要在 update 里发送 `metadata`**：服务端 metadata 语义是**整块替换**（不是 merge），
+ * 旧实现发 `metadata: { change_reason }` 会把该密钥的其它 metadata 键全部清空（P0 数据丢失）。
+ * 变更原因只走 `X-Change-Reason` 请求头（服务端写审计）；只有 `createSecret` 新建时
+ * 才允许携带完整 metadata（那是首次写入，不存在覆盖问题）。
+ */
 export async function updateSecretMeta(key: string, input: UpdateSecretInput, scope?: ScopeOverride): Promise<SecretItem> {
-  const metadata = input.reason?.trim() ? { change_reason: input.reason.trim() } : undefined;
   const res = await request<{ data?: SecretItem }>(API_BASE, '/update', {
     method: 'POST',
     query: { key },
-    body: { description: input.description, metadata },
+    body: { description: input.description },
     changeReason: input.reason?.trim() || undefined,
     scope,
   });
@@ -528,16 +534,32 @@ export async function listAudit(query: ListAuditQuery = {}): Promise<{ items: Au
 
 /* -------------------------------- 健康探测 -------------------------------- */
 
-export type ApiHealth = { ok: boolean; mode: 'mock' | 'api'; message: string };
+export type ApiHealth = {
+  ok: boolean;
+  mode: 'mock' | 'api';
+  message: string;
+  /** 未探测（例如未选择租户）：UI 显示中性状态，不要当作「不可达」。 */
+  skipped?: boolean;
+};
 
+/**
+ * 连通性探测。
+ *
+ * 作用域口径：`X-Tenant-ID` 取会话里的租户。**租户为空时不回落到平台端点 `/all`**
+ * —— 那需要平台管理员，普通账号只会拿到 403，界面会误报「API 不可达」。
+ * 空租户直接返回「未选择租户」状态（不探测、不发请求）。
+ */
 export async function checkApi(): Promise<ApiHealth> {
   const session = currentSession();
   if (AUTH_MODE === 'oidc' && !session?.accessToken) {
     return { ok: false, mode: 'api', message: '未登录：未检测 API' };
   }
+  const tenantId = (session?.user.tenantId ?? '').trim();
+  if (!tenantId) {
+    return { ok: false, skipped: true, mode: 'api', message: '未选择租户：未检测 API（先选择租户）' };
+  }
+  const platform = tenantId === PLATFORM_TENANT_ID;
   try {
-    const tenantId = session?.user.tenantId ?? '';
-    const platform = !tenantId || tenantId === PLATFORM_TENANT_ID;
     const { total } = platform
       ? await listAllSecrets({ page: 1, page_size: 1 })
       : await listSecrets({ page: 1, page_size: 1 }, { tenantId });

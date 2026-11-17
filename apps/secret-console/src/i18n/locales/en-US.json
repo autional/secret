@@ -172,8 +172,8 @@
   "secrets.keyMax": "At most 512 characters",
   "secrets.listError": "Failed to load the secret list",
   "secrets.newValue": "New secret value",
-  "secrets.reasonExtra": "Recorded in the audit event metadata.change_reason.",
-  "secrets.reasonLabel": "Reason for change (optional)",
+  "secrets.reasonExtra": "Required for writes; sent as X-Change-Reason and recorded in the audit log.",
+  "secrets.reasonLabel": "Reason for change",
   "secrets.revealReasonPlaceholder": "e.g. verifying a historical version while debugging",
   "secrets.revealWarn": "Revealing is audited (version_read) and hides after 30 seconds.",
   "secrets.revokeWarn": "Revoked secrets can no longer be read",
@@ -191,5 +191,8 @@
   "sidebar.tenant": "Tenant",
   "sidebar.platformTenant": "Platform",
   "sidebar.roles": "Roles",
-  "sidebar.namespace": "Namespace"
+  "sidebar.namespace": "Namespace",
+  "secrets.reasonRequired": "Please provide a reason (1–200 characters)",
+  "overview.policyReasonHint": "Saving the policy is audited; provide a reason (sent as X-Change-Reason).",
+  "overview.healthSkipped": "No tenant"
 }

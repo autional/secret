@@ -4,9 +4,10 @@ import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { AppPageHeader } from '@autional/ui';
 import { PageSection } from '@/components/page-section';
+import { ReasonModal } from '@/components/reason-modal';
 import { API_BASE, API_NAMESPACE, AUTH_MODE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { checkApi, getEncryptionKeys, getSecretPolicy, listAllScopes, listAllSecrets, listSecrets, upsertSecretPolicy } from '@/lib/api';
-import type { SecretPolicy, SecretScope } from '@/lib/api';
+import type { SecretPolicy, SecretPolicyInput, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
 import { useSession } from '@/hooks/use-session';
 
@@ -22,8 +23,10 @@ export default function OverviewPage() {
   const [policy, setPolicy] = useState<SecretPolicy | null>(null);
   const [policyError, setPolicyError] = useState('');
   const [encryptionKey, setEncryptionKey] = useState('');
-  const [health, setHealth] = useState<{ ok: boolean; message: string } | null>(null);
+  const [health, setHealth] = useState<{ ok: boolean; skipped?: boolean; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  /** 策略保存的待确认草稿：非空表示「变更原因」弹窗已打开（拿到原因才发 PUT）。 */
+  const [policyDraft, setPolicyDraft] = useState<SecretPolicyInput | null>(null);
   const [form] = Form.useForm();
 
   // 租户模式：策略作用域固定为本租户
@@ -83,7 +86,7 @@ export default function OverviewPage() {
       /* 缺失不影响主流程 */
     }
     checkApi()
-      .then((res) => setHealth({ ok: res.ok, message: res.message }))
+      .then((res) => setHealth({ ok: res.ok, skipped: res.skipped, message: res.message }))
       .catch(() => setHealth({ ok: false, message: t('overview.healthFailed') }));
   }, [isPlatformSession, tenantId, t, session]);
 
@@ -120,20 +123,28 @@ export default function OverviewPage() {
     return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, label: `${value} (${count})` }));
   }, [scopes, t, isPlatformSession]);
 
-  const savePolicy = async () => {
-    const values = await form.validateFields();
+  /** 第一步：校验表单 → 打开「变更原因」弹窗（策略 PUT 必须带原因）。 */
+  const requestPolicySave = async () => {
+    let values: Record<string, unknown>;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // 表单校验失败：AntD 已在字段上给出提示
+    }
+    setPolicyDraft({
+      auto_rotate_days: Number(values.auto_rotate_days ?? 0),
+      notification_days_before: Number(values.notification_days_before ?? 0),
+      max_versions: Number(values.max_versions ?? 10),
+    });
+  };
+
+  /** 第二步：拿到非空原因才提交，原因走 X-Change-Reason（服务端写审计）。 */
+  const savePolicy = async (input: SecretPolicyInput, reason: string) => {
     setSaving(true);
     try {
-      const next = await upsertSecretPolicy(
-        {
-          auto_rotate_days: Number(values.auto_rotate_days ?? 0),
-          notification_days_before: Number(values.notification_days_before ?? 0),
-          max_versions: Number(values.max_versions ?? 10),
-        },
-        '',
-        { tenantId: tenant },
-      );
+      const next = await upsertSecretPolicy(input, reason, { tenantId: tenant });
       setPolicy(next);
+      setPolicyDraft(null);
       message.success(t('overview.policySaved'));
     } catch (err) {
       message.error(err instanceof Error ? err.message : String(err));
@@ -197,7 +208,7 @@ export default function OverviewPage() {
               size="small"
               loading={saving}
               disabled={DATA_MODE !== 'api' || !tenant}
-              onClick={() => void savePolicy()}
+              onClick={() => void requestPolicySave()}
             >
               {t('common.save')}
             </Button>
@@ -222,8 +233,8 @@ export default function OverviewPage() {
             <div className="flex items-center gap-2">
               <span>{t('overview.apiBase')}</span>
               {health ? (
-                <Tag color={health.ok ? 'green' : 'red'} title={health.message}>
-                  {health.ok ? t('overview.healthOk') : t('overview.healthFailed')}
+                <Tag color={health.skipped ? 'default' : health.ok ? 'green' : 'red'} title={health.message}>
+                  {health.skipped ? t('overview.healthSkipped') : health.ok ? t('overview.healthOk') : t('overview.healthFailed')}
                 </Tag>
               ) : null}
             </div>
@@ -249,6 +260,21 @@ export default function OverviewPage() {
       </div>
 
       <Alert type="info" showIcon title={t('overview.maskTitle')} description={t('overview.maskDescription')} />
+
+      {policyDraft ? (
+        <ReasonModal
+          title={t('overview.policyTitle')}
+          description={
+            <Typography.Paragraph type="secondary">
+              {t('overview.policyReasonHint')} · <Typography.Text code>{tenant}</Typography.Text>
+            </Typography.Paragraph>
+          }
+          confirmText={t('common.save')}
+          busy={saving}
+          onCancel={() => setPolicyDraft(null)}
+          onConfirm={(reason) => void savePolicy(policyDraft, reason)}
+        />
+      ) : null}
     </>
   );
 }

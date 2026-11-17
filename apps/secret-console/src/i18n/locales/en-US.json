@@ -128,6 +128,7 @@
   "audit.col.tenant": "Tenant",
   "audit.col.target": "Target",
   "audit.col.operator": "Operator",
+  "audit.col.reason": "Reason",
   "audit.col.message": "Message",
   "notFound.title": "Page not found",
   "notFound.description": "The link may be stale.",

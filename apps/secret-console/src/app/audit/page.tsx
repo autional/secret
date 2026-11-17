@@ -6,6 +6,7 @@ import { DataTable } from '@autional/ui/antd';
 import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { getTenant, getUser, listAudit, listTenants } from '@/lib/api';
 import type { AuditLogItem } from '@/lib/api';
+import { changeReasonOf } from '@/lib/audit';
 import { useSession } from '@/hooks/use-session';
 import i18n from '@/i18n';
 import { PageSection } from '@/components/page-section';
@@ -157,6 +158,21 @@ export default function AuditPage() {
         dataIndex: 'action',
         width: 160,
         render: (value?: string) => <code className="font-mono text-xs">{value || '—'}</code>,
+      },
+      {
+        title: t('audit.col.reason'),
+        dataIndex: 'metadata',
+        width: 260,
+        ellipsis: true,
+        render: (_value: unknown, row?: AuditLogItem) => {
+          const reason = changeReasonOf(row);
+          if (!reason) return '—';
+          return (
+            <Tooltip title={reason}>
+              <span>{reason}</span>
+            </Tooltip>
+          );
+        },
       },
       {
         title: t('audit.col.tenant'),

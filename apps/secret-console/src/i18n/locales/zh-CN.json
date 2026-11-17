@@ -128,6 +128,7 @@
   "audit.col.tenant": "租户",
   "audit.col.target": "对象",
   "audit.col.operator": "操作者",
+  "audit.col.reason": "变更原因",
   "audit.col.message": "说明",
   "notFound.title": "页面不存在",
   "notFound.description": "链接可能已失效。",

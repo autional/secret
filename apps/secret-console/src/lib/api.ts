@@ -35,7 +35,13 @@ export class ApiError extends Error {
 /** 401 事件：由 App 监听后切到「需要登录」状态。 */
 export const UNAUTHORIZED_EVENT = 'secret-center:unauthorized';
 
-type ProblemBody = { title?: string; detail?: string; code?: string; status?: number; message?: string } | null;
+/** 服务端 Problem 体：`code` 实际是**数字**（如 30000001），放宽类型后统一经 `codeOf` 归一为字符串。 */
+type ProblemBody = { title?: string; detail?: string; code?: string | number; status?: number; message?: string } | null;
+
+function codeOf(problem: ProblemBody): string {
+  const code = problem?.code;
+  return code === undefined || code === null ? '' : String(code);
+}
 
 export type QueryValue = string | number | boolean | null | undefined;
 export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -127,16 +133,15 @@ function toApiError(error: unknown): ApiError {
   if (error.code === 'network_error') return new ApiError(0, `无法连接服务：${error.detail || error.message}`);
   const problem = (error.body && typeof error.body === 'object' ? error.body : null) as ProblemBody;
   if (error.status === 401) {
-    const domainMiss =
-      String(problem?.code ?? error.code ?? '') === '30000001' || /not found/i.test(problem?.detail ?? '');
+    const domainMiss = codeOf(problem) === '30000001' || /not found/i.test(problem?.detail ?? '');
     return new ApiError(
       401,
       problemMessage(401, problem),
-      problem?.code ?? (domainMiss ? 'not_found' : 'unauthorized'),
+      codeOf(problem) || (domainMiss ? 'not_found' : 'unauthorized'),
       problem?.detail ?? '',
     );
   }
-  return new ApiError(error.status, problemMessage(error.status, problem), problem?.code ?? '', problem?.detail ?? '');
+  return new ApiError(error.status, problemMessage(error.status, problem), codeOf(problem), problem?.detail ?? '');
 }
 
 /** 统一请求入口：带作用域头、可被 401 触发一次静默续期、错误归一为 ApiError。 */
@@ -390,15 +395,33 @@ export async function upsertSecretPolicy(input: SecretPolicyInput, reason?: stri
   return unwrap(res, '策略');
 }
 
-export type EncryptionKeyInfo = { keyId?: string; key_id?: string; status?: string; createdAt?: string };
+export type EncryptionKeyInfo = {
+  keyId?: string;
+  key_id?: string;
+  status?: string;
+  algorithm?: string;
+  createdAt?: string;
+};
+
+/**
+ * 加密密钥环元数据（`GET /encryption-keys`）。
+ *
+ * 服务端响应形状：`{ data: { keys: [{ key_id, algorithm, status }] } }`，
+ * `status = current | fallback`；**不保证数组顺序**，也没有顶层 `current` 字段。
+ * 因此「当前密钥」必须按 `status === 'current'` 选，不能取首项（否则轮换后展示旧密钥 ID）。
+ * 兼容旧响应里可能存在的顶层 `current`。
+ */
 export async function getEncryptionKeys(): Promise<{ current: string; available: string[] }> {
   const res = await request<{ data?: { current?: string; keys?: EncryptionKeyInfo[] } }>(API_BASE, '/encryption-keys');
   const data = res?.data ?? {};
   const keys = Array.isArray(data.keys) ? data.keys : [];
-  const available = keys
-    .map((item) => String(item.keyId ?? item.key_id ?? ''))
-    .filter((id): id is string => id !== '');
-  return { current: String(data.current ?? available[0] ?? ''), available };
+  const idOf = (item: EncryptionKeyInfo): string => String(item.keyId ?? item.key_id ?? '').trim();
+  const available = keys.map(idOf).filter((id) => id !== '');
+  const currentByStatus = keys
+    .filter((item) => String(item.status ?? '').trim().toLowerCase() === 'current')
+    .map(idOf)
+    .find((id) => id !== '');
+  return { current: String(data.current ?? currentByStatus ?? available[0] ?? ''), available };
 }
 
 

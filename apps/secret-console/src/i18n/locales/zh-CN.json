@@ -144,7 +144,7 @@
   "audit.to": "止",
   "audit.loadFailed": "读取审计失败",
   "audit.loadFailedHint": "{{error}}（审计接口要求 audit:read 与 scope=read）",
-  "audit.ok": "成功",
+  "audit.success": "成功",
   "audit.scopePlatform": "审计范围：{{tenant}}",
   "audit.scopePlatformHint": "平台管理员默认读取全部租户（近 30 天）；可输入租户 ULID 收窄。",
   "audit.scopeTenant": "审计范围：认证租户",

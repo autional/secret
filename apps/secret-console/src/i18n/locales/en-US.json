@@ -144,7 +144,7 @@
   "audit.to": "To",
   "audit.loadFailed": "Failed to load the audit log",
   "audit.loadFailedHint": "{{error}} (the audit API requires audit:read and scope=read)",
-  "audit.ok": "OK",
+  "audit.success": "OK",
   "audit.scopePlatform": "Audit scope: {{tenant}}",
   "audit.scopePlatformHint": "Platform admins read all tenants (last 30 days); type a tenant ULID to narrow.",
   "audit.scopeTenant": "Audit scope: authenticated tenant",

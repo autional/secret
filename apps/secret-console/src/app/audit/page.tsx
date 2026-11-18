@@ -6,7 +6,7 @@ import { DataTable } from '@autional/ui/antd';
 import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { getTenant, getUser, listAudit, listTenants } from '@/lib/api';
 import type { AuditLogItem } from '@/lib/api';
-import { changeReasonOf } from '@/lib/audit';
+import { changeReasonOf, isAuditSuccess } from '@/lib/audit';
 import { useSession } from '@/hooks/use-session';
 import i18n from '@/i18n';
 import { PageSection } from '@/components/page-section';
@@ -215,8 +215,8 @@ export default function AuditPage() {
         dataIndex: 'status',
         width: 100,
         render: (value?: number) => {
-          const ok = typeof value !== 'number' || (value >= 200 && value < 400);
-          return <Tag color={ok ? 'green' : 'red'}>{ok ? t('audit.ok') : String(value ?? '—')}</Tag>;
+          const ok = isAuditSuccess(value);
+          return <Tag color={ok ? 'green' : 'red'}>{ok ? t('audit.ok') : t('audit.fail')}</Tag>;
         },
       },
     ],

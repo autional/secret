@@ -22,3 +22,23 @@ export function changeReasonOf(item?: Pick<AuditLogItem, 'metadata'> | null): st
   if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw).trim();
   return '';
 }
+
+/**
+ * 审计事件的「结果」语义判定（唯一真源，勿在视图里另写一套）。
+ *
+ * 服务端口径（`shared/service-audit/internal/repository/audit_repository.go:269`
+ * `statusClassOr`，及 `internal/handler/dto/dto.go:49` 的 `Status int` 字段注释）：
+ * - 成功 = `status ∈ {0}` ∪ `[200, 300)`
+ * - 失败 = `status ∈ {1}` ∪ `[400, ∞)`
+ *
+ * 也就是说 `status` 是**业务状态码**（`0=成功 / 1=失败`），不是 HTTP 语义；
+ * 「兼容旧 HTTP 码」只覆盖 `2xx`。历史上前端按 `200 ≤ status < 400` 判断，
+ * 既把 `0` 误判为失败（成功事件显示红标），又把 `3xx` 误判为成功。
+ *
+ * `status == null`（字段缺失）视为成功：老事件 / 非请求类事件没有状态码。
+ */
+export function isAuditSuccess(status?: number | null): boolean {
+  if (status == null) return true;
+  if (status === 0) return true;
+  return status >= 200 && status < 300;
+}

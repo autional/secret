@@ -139,6 +139,7 @@
   "audit.allTenants": "All tenants (last 30 days by default)",
   "audit.col.result": "Result",
   "audit.empty": "No matching audit events",
+  "audit.fail": "Failed",
   "audit.from": "From",
   "audit.to": "To",
   "audit.loadFailed": "Failed to load the audit log",

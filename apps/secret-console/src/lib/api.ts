@@ -164,6 +164,8 @@ export type SecretItem = {
   id?: string;
   tenant_id?: string;
   app_id?: string;
+  /** 第 4 维作用域（`''`/缺失 = 全局默认行；provision 行 = 服务名）。列表与详情都下发，全局行不出现（omitempty）。 */
+  service_name?: string;
   key: string;
   description?: string;
   metadata?: Record<string, unknown>;
@@ -254,10 +256,52 @@ export async function listAllSecrets(
   return { items: res?.items ?? res?.data ?? [], total: res?.total ?? 0 };
 }
 
-/** 详情（只读）：元数据 + 版本列表。 */
-export async function getSecretDetail(key: string, scope?: ScopeOverride): Promise<SecretDetail> {
-  const res = await request<{ data?: SecretDetail }>(API_BASE, '/detail', { query: { key }, scope });
+/** 详情请求的显式作用域（tenant / app / service 三维；全部可空）。 */
+export type SecretDetailScope = {
+  tenant_id?: string;
+  app_id?: string;
+  service_name?: string;
+};
+
+/**
+ * 详情的作用域 query（来自列表行 / 深链参数）。
+ *
+ * 为什么必须走 query：`X-App-ID` 在网关是**授权上下文**，无 aid 时被剥离、不一致时 403，
+ * 所以后端 detail 只能用显式 query 定位行（provision 行还需 `service_name`）。
+ * 口径（与 service-secret `GET /admin/secrets/detail` 一致）：
+ *   - 空值**一律不传**（传空串会被后端 `Normalize` 视作未传，但拼进 URL 易造成歧义）；
+ *   - 全局行（`service_name` 为空/缺失）不传该参数 ⇒ 后端走「或 ''」兜底读全局默认行；
+ *   - 三个参数全空 ⇒ 老行为（header/ctx），与改造前完全一致。
+ */
+function detailQueryOf(key: string, detailScope?: SecretDetailScope): Record<string, QueryValue> {
+  const query: Record<string, QueryValue> = { key };
+  const tenantId = String(detailScope?.tenant_id ?? '').trim();
+  const appId = String(detailScope?.app_id ?? '').trim();
+  const serviceName = String(detailScope?.service_name ?? '').trim();
+  if (tenantId) query.tenant_id = tenantId;
+  if (appId) query.app_id = appId;
+  if (serviceName) query.service_name = serviceName;
+  return query;
+}
+
+/** 详情（只读）：元数据 + 版本列表。`detailScope` = 该行自己的作用域（见 `detailQueryOf`）。 */
+export async function getSecretDetail(
+  key: string,
+  scope?: ScopeOverride,
+  detailScope?: SecretDetailScope,
+): Promise<SecretDetail> {
+  const res = await request<{ data?: SecretDetail }>(API_BASE, '/detail', { query: detailQueryOf(key, detailScope), scope });
   return unwrap(res, '详情');
+}
+
+/**
+ * 是否为「当前作用域下不存在该密钥」（服务端 401 + 业务码 `30000001` 反枚举）。
+ *
+ * 这**不是**会话失效：UI 不应登出，而应明确提示作用域不一致（并给切换作用域入口）。
+ */
+export function isSecretNotFound(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.code === '30000001' || error.code === 'not_found';
 }
 
 /** 应用作用域（tenant 下实际存在的 app_id 与条目数）。 */

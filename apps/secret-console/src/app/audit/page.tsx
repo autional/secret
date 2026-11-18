@@ -6,7 +6,7 @@ import { DataTable } from '@autional/ui/antd';
 import { DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
 import { getTenant, getUser, listAudit, listTenants } from '@/lib/api';
 import type { AuditLogItem } from '@/lib/api';
-import { auditStatusKind, changeReasonOf } from '@/lib/audit';
+import { auditResultDisplay, changeReasonOf, isSystemOperator } from '@/lib/audit';
 import { useSession } from '@/hooks/use-session';
 import i18n from '@/i18n';
 import { PageSection } from '@/components/page-section';
@@ -113,9 +113,11 @@ export default function AuditPage() {
   // 操作者名（平台账号解析，失败回退事件租户，最后回退 ID）
   useEffect(() => {
     if (!isPlatform || !rows.length) return;
-    const missing = [...new Set(rows.map((row) => row.operator_id).filter((id): id is string => !!id))].filter(
-      (id) => !userNames[id],
-    );
+    // 系统事件（operator_id = 'system'）与空操作者没有用户档案，视图显示「系统」文案，
+    // 这里必须先排除：否则每页都会打一次必然 404 的 /admin/users/system。
+    const missing = [
+      ...new Set(rows.map((row) => row.operator_id).filter((id): id is string => !!id && !isSystemOperator(id))),
+    ].filter((id) => !userNames[id]);
     if (!missing.length) return;
     let alive = true;
     void (async () => {
@@ -198,7 +200,8 @@ export default function AuditPage() {
         width: 220,
         ellipsis: true,
         render: (value?: string) => {
-          if (!value) return 'system';
+          // 系统事件（'system'）与空操作者不查用户档案，直接显示本地化文案
+          if (!value || isSystemOperator(value)) return t('audit.systemOperator');
           const name = userNames[value];
           return (
             <Tooltip title={value}>
@@ -215,14 +218,10 @@ export default function AuditPage() {
         dataIndex: 'status',
         width: 100,
         render: (value?: number) => {
-          const kind = auditStatusKind(value);
+          const display = auditResultDisplay(value);
           // 三态：raw（如 3xx / 其它中间码）不猜语义，原样展示数字（与 admin-console 口径一致）
-          if (kind === 'raw') return <span className="font-mono text-xs">{value}</span>;
-          return (
-            <Tag color={kind === 'success' ? 'green' : 'red'}>
-              {kind === 'success' ? t('audit.success') : t('audit.fail')}
-            </Tag>
-          );
+          if (display.kind === 'raw') return <span className="font-mono text-xs">{display.text}</span>;
+          return <Tag color={display.labelKey === 'audit.success' ? 'green' : 'red'}>{t(display.labelKey)}</Tag>;
         },
       },
     ],

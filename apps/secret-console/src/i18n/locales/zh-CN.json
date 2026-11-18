@@ -149,6 +149,7 @@
   "audit.scopePlatformHint": "平台管理员默认读取全部租户（近 30 天）；可输入租户 ULID 收窄。",
   "audit.scopeTenant": "审计范围：认证租户",
   "audit.scopeTenantHint": "服务端强制使用 JWT 租户查询；非平台账号只能看到本租户事件。",
+  "audit.systemOperator": "系统",
   "audit.systemTenant": "系统租户",
   "audit.tenantPlaceholder": "全部租户（可输入租户 ULID 过滤）",
   "audit.total": "共 {{count}} 条",
@@ -195,6 +196,10 @@
   "sidebar.roles": "角色",
   "sidebar.namespace": "命名空间",
   "secrets.reasonRequired": "请填写变更原因（1–200 字）",
+  "secrets.detailMissTitle": "该作用域下不存在此密钥",
+  "secrets.detailMissDescription": "租户 {{tenant}} · 应用 {{app}} · 服务 {{service}} 未命中。服务密钥（provision 行）需要 service 维一致；也可能是密钥已删除，或当前账号无权查看该作用域。",
+  "secrets.detailMissSwitchScope": "切换作用域",
+  "secrets.detailMissBack": "返回列表",
   "overview.policyReasonHint": "保存策略会写入审计，请填写变更原因（随 X-Change-Reason 发送）。",
   "overview.healthSkipped": "未选租户"
 }

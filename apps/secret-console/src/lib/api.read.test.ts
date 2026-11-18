@@ -162,6 +162,67 @@ describe('secret api · 读路径契约', () => {
     expect(init.headers?.['X-App-ID']).toBe('secret-service');
   });
 
+  it('getSecretDetail：带行作用域时 query 含 tenant_id/app_id/service_name（provision 行）', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        code: 0,
+        data: { key: 'EMAIL_PASSWORD', tenant_id: '_system', app_id: 'communication-service', service_name: 'communication-service' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { getSecretDetail } = await import('./api');
+
+    await getSecretDetail(
+      'EMAIL_PASSWORD',
+      { tenantId: '_system', appId: 'communication-service' },
+      { tenant_id: '_system', app_id: 'communication-service', service_name: 'communication-service' },
+    );
+
+    const [url, init] = firstCall(fetchMock);
+    expect(url).toBe(
+      'https://secret.autional.com/bff/secret/api/v1/admin/secrets/detail?key=EMAIL_PASSWORD&tenant_id=_system&app_id=communication-service&service_name=communication-service',
+    );
+    // 作用域头仍保留（授权上下文），query 才是数据作用域
+    expect(init.headers?.['X-Tenant-ID']).toBe('_system');
+  });
+
+  it('getSecretDetail：全局行（service_name 为空/缺失）不传 service_name，也不传空串参数', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ code: 0, data: { key: 'GLOBAL_KEY', tenant_id: 'ten-a', versions: [] } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { getSecretDetail } = await import('./api');
+
+    await getSecretDetail('GLOBAL_KEY', { tenantId: 'ten-a' }, { tenant_id: 'ten-a', app_id: '', service_name: '' });
+    expect(firstCall(fetchMock)[0]).toBe(
+      'https://secret.autional.com/bff/secret/api/v1/admin/secrets/detail?key=GLOBAL_KEY&tenant_id=ten-a',
+    );
+
+    fetchMock.mockClear();
+    await getSecretDetail('GLOBAL_KEY', { tenantId: 'ten-a' }, { tenant_id: 'ten-a' });
+    expect(firstCall(fetchMock)[0]).toBe(
+      'https://secret.autional.com/bff/secret/api/v1/admin/secrets/detail?key=GLOBAL_KEY&tenant_id=ten-a',
+    );
+  });
+
+  it('getSecretDetail：不给 detailScope 时仍是老行为（只带 key，靠 header/ctx）', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ code: 0, data: { key: 'jwt_secret', versions: [] } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { getSecretDetail } = await import('./api');
+
+    await getSecretDetail('jwt_secret');
+    expect(firstCall(fetchMock)[0]).toBe('https://secret.autional.com/bff/secret/api/v1/admin/secrets/detail?key=jwt_secret');
+  });
+
+  it('isSecretNotFound：30000001 / not_found 为作用域未命中，其它错误不算', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => problem(401, 30000001, 'secret not found in scope')));
+    const { getSecretDetail, isSecretNotFound, ApiError } = await import('./api');
+
+    await expect(getSecretDetail('missing')).rejects.toMatchObject({ code: '30000001' });
+    const miss = await getSecretDetail('missing').catch((err: unknown) => err);
+    expect(isSecretNotFound(miss)).toBe(true);
+    expect(isSecretNotFound(new ApiError(403, 'forbidden', '40000503'))).toBe(false);
+    expect(isSecretNotFound(new Error('boom'))).toBe(false);
+  });
+
   it('getEncryptionKeys：current 按 status=current 选，不取数组首项', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { auditStatusKind, changeReasonOf, isAuditSuccess } from './audit';
+import { auditResultDisplay, auditStatusKind, changeReasonOf, isAuditSuccess, isSystemOperator } from './audit';
+import zhCN from '../i18n/locales/zh-CN.json';
+import enUS from '../i18n/locales/en-US.json';
 
 describe('changeReasonOf', () => {
   it('读取 metadata.change_reason 并去除首尾空白', () => {
@@ -81,5 +83,56 @@ describe('isAuditSuccess（兼容导出）', () => {
     expect(isAuditSuccess(1)).toBe(false);
     expect(isAuditSuccess(302)).toBe(false);
     expect(isAuditSuccess(500)).toBe(false);
+  });
+});
+
+// 结果列三态的**展示映射**回归（F3）：线上样本只有 200/400/401，
+// 第 3 分支（原样显示数字）没有真实流量，只能靠这里锁住。
+describe('auditResultDisplay（结果列三态展示）', () => {
+  it('200 → 成功态：绿色标签 + audit.success 文案', () => {
+    const display = auditResultDisplay(200);
+    expect(display).toEqual({ kind: 'label', labelKey: 'audit.success' });
+    expect(zhCN['audit.success']).toBe('成功');
+    expect(enUS['audit.success']).toBe('OK');
+  });
+
+  it('400 / 401 → 失败态：红色标签 + audit.fail 文案', () => {
+    for (const status of [400, 401]) {
+      const display = auditResultDisplay(status);
+      expect(display, `status=${status}`).toEqual({ kind: 'label', labelKey: 'audit.fail' });
+    }
+    expect(zhCN['audit.fail']).toBe('失败');
+    expect(enUS['audit.fail']).toBe('Failed');
+  });
+
+  it('302 / 300 / 399 → raw：原样显示数字，不得被误判成成功或失败', () => {
+    for (const status of [302, 300, 399]) {
+      const display = auditResultDisplay(status);
+      expect(display, `status=${status}`).toEqual({ kind: 'raw', text: String(status) });
+      // 判别性：只看 kind 也会误把 raw 当 label，故同时断言不是 label 分支
+      expect(display.kind, `status=${status}`).not.toBe('label');
+    }
+  });
+
+  it('202 属 2xx → 成功态（口径真源 statusClassOr；不要按「非 200 即原样」实现）', () => {
+    // 任务书曾假设 202 应原样展示，但服务端 statusClassOr 与 admin-console A-197 都是
+    // success = {0} ∪ [200,300)，202 落在成功区间；此处锁住，避免被改成 raw。
+    expect(auditResultDisplay(202)).toEqual({ kind: 'label', labelKey: 'audit.success' });
+  });
+});
+
+// F2：系统事件（operator_id = 'system'）与空操作者不发用户查询，直接显示本地化「系统」。
+describe('isSystemOperator', () => {
+  it("'system'（含大小写/空白变体）与空值为系统操作者", () => {
+    expect(isSystemOperator('system')).toBe(true);
+    expect(isSystemOperator(' SYSTEM ')).toBe(true);
+    expect(isSystemOperator('')).toBe(true);
+    expect(isSystemOperator(undefined)).toBe(true);
+    expect(isSystemOperator(null)).toBe(true);
+  });
+
+  it('真实用户 ID 不被误判（仍走批量解析）', () => {
+    expect(isSystemOperator('01HZX8Q2K7V3N5M4P6R8S0T2W9')).toBe(false);
+    expect(isSystemOperator('system-admin')).toBe(false);
   });
 });

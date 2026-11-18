@@ -149,6 +149,7 @@
   "audit.scopePlatformHint": "Platform admins read all tenants (last 30 days); type a tenant ULID to narrow.",
   "audit.scopeTenant": "Audit scope: authenticated tenant",
   "audit.scopeTenantHint": "The server always queries the JWT tenant; non-platform accounts only see their own tenant.",
+  "audit.systemOperator": "System",
   "audit.systemTenant": "System tenant",
   "audit.tenantPlaceholder": "All tenants (type a ULID to filter)",
   "audit.total": "{{count}} events",
@@ -195,6 +196,10 @@
   "sidebar.roles": "Roles",
   "sidebar.namespace": "Namespace",
   "secrets.reasonRequired": "Please provide a reason (1–200 characters)",
+  "secrets.detailMissTitle": "Secret not found in this scope",
+  "secrets.detailMissDescription": "No match for tenant {{tenant}} · app {{app}} · service {{service}}. Provisioned service keys require the matching service scope; the key may also be deleted or outside your visible scope.",
+  "secrets.detailMissSwitchScope": "Switch scope",
+  "secrets.detailMissBack": "Back to list",
   "overview.policyReasonHint": "Saving the policy is audited; provide a reason (sent as X-Change-Reason).",
   "overview.healthSkipped": "No tenant"
 }

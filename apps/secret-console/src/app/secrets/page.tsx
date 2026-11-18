@@ -12,6 +12,7 @@ import {
   createSecret,
   deleteSecret,
   getSecretDetail,
+  isSecretNotFound,
   listAllScopes,
   listAllSecrets,
   listAppScopes,
@@ -21,7 +22,7 @@ import {
   rotateSecret,
   updateSecretMeta,
 } from '@/lib/api';
-import type { SecretDetail, SecretItem, SecretScope } from '@/lib/api';
+import type { SecretDetail, SecretDetailScope, SecretItem, SecretScope } from '@/lib/api';
 import { MOCK_SECRETS } from '@/lib/mock';
 import { useSession } from '@/hooks/use-session';
 import i18n from '@/i18n';
@@ -59,11 +60,17 @@ function groupByScope(rows: SecretItem[]): Array<{ tenantId: string; appId?: str
   return [...map.values()];
 }
 
+/** 详情可用的行级作用域（手点行 / 深链命中行同源；缺字段 = 未知，不猜）。 */
+type DetailRow = { tenant_id?: string; app_id?: string; service_name?: string };
+
+/** 详情「该作用域下不存在此密钥」的上下文（30000001），用于抽屉内给可点入口。 */
+type DetailMiss = { key: string; tenantId: string; appId: string; serviceName: string };
+
 export default function SecretsPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
   const { session } = useSession();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [rows, setRows] = useState<SecretItem[]>(DATA_MODE === 'api' ? [] : MOCK_SECRETS);
   const [total, setTotal] = useState(DATA_MODE === 'api' ? 0 : MOCK_SECRETS.length);
@@ -80,6 +87,7 @@ export default function SecretsPage() {
   const [selected, setSelected] = useState<string[]>([]);
 
   const [detail, setDetail] = useState<SecretDetail | null>(null);
+  const [detailMiss, setDetailMiss] = useState<DetailMiss | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [write, setWrite] = useState<WriteState | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -193,42 +201,83 @@ export default function SecretsPage() {
     return [...set].filter(Boolean).sort().map((value) => ({ value, label: value }));
   }, [scopes, tenant]);
 
+  /**
+   * 详情请求的作用域（手点行与深链命中行走同一份）。
+   *
+   * 为什么带 query：`X-App-ID` 在网关是授权上下文（无 aid 被剥离 / 不一致 403），
+   * 后端 detail 只能靠 `tenant_id` / `app_id` / `service_name` 定位行（provision 行必须给 service_name）。
+   * 空值不传：全局行（app/service 为空）交给后端走「或 ''」兜底，避免空串歧义。
+   */
+  const detailScopeOf = useCallback(
+    (row?: DetailRow): { scope?: { tenantId: string; appId?: string }; query: SecretDetailScope } => {
+      const rowTenant = String(row?.tenant_id ?? '').trim();
+      const rowApp = String(row?.app_id ?? '').trim();
+      // 行上有 app（可能为空 = 全局行）时以行为准；没有行（老路径兜底）才用当前筛选
+      const tenantForDetail = isPlatformSession ? rowTenant || tenant : tenantId;
+      const appForDetail = row ? rowApp : appId;
+      return {
+        scope: tenantForDetail ? { tenantId: tenantForDetail, appId: appForDetail || undefined } : undefined,
+        query: { tenant_id: tenantForDetail, app_id: appForDetail, service_name: row?.service_name },
+      };
+    },
+    [appId, isPlatformSession, tenant, tenantId],
+  );
+
+  /**
+   * 打开详情：手点行 / 深链命中行**共用**这一份请求（唯一入口）。
+   * 返回是否成功；`quietMiss` 用于深链逐作用域探测时静默失败（不打断探针）。
+   */
   const openDetail = useCallback(
-    async (key: string, row?: { tenant_id?: string; app_id?: string }) => {
+    async (key: string, row?: DetailRow, options: { quietMiss?: boolean } = {}): Promise<boolean> => {
+      const { scope, query } = detailScopeOf(row);
       setDetailLoading(true);
       setRevealed(null);
       setRevealError('');
+      if (!options.quietMiss) setDetailMiss(null);
       try {
         if (DATA_MODE !== 'api') {
           const found = MOCK_SECRETS.find((item) => item.key === key) ?? null;
           setDetail(found ? { ...found, versions: [] } : null);
-          return;
+          return !!found;
         }
-        // 平台级列表会跨租户：详情必须带**该行自己的**租户/应用作用域；
-        // 租户模式强制自己的租户，避免 query 参数越权（服务端仍会兜底 403）。
-        const scopeTenant = isPlatformSession ? row?.tenant_id || tenant : tenantId;
-        const scope = scopeTenant
-          ? { tenantId: scopeTenant, appId: row?.app_id || appId || undefined }
-          : undefined;
-        setDetail(await getSecretDetail(key, scope));
+        setDetail(await getSecretDetail(key, scope, query));
+        setDetailMiss(null);
+        return true;
       } catch (err) {
+        // 30000001（HTTP 401 反枚举）= 该作用域下不存在此密钥，**不是**会话失效：
+        // 不再只弹一条 toast 就结束，而是在抽屉里明确提示作用域并给「切换作用域 / 返回列表」。
+        if (isSecretNotFound(err)) {
+          setDetail(null);
+          if (!options.quietMiss) {
+            setDetailMiss({
+              key,
+              tenantId: query.tenant_id ?? '',
+              appId: query.app_id ?? '',
+              serviceName: query.service_name ?? '',
+            });
+          }
+          return false;
+        }
         message.error(err instanceof Error ? err.message : String(err));
+        return false;
       } finally {
         setDetailLoading(false);
       }
     },
-    [tenant, appId, message, isPlatformSession, tenantId],
+    [detailScopeOf, message],
   );
 
   // 深链：/secrets?key=xxx 直接打开详情。
-  // 平台：可带 tenant/app；只带 key 时按 /all?prefix= 解析真实作用域。
-  // 租户：强制本租户；只带 key 时先查本租户全局行，再逐 app 作用域探测。
+  // 平台：可带 tenant/app/service；只带 key 时按 /all?prefix= 解析真实作用域（行里含 service_name）。
+  // 租户：强制本租户；只带 key 时先查本租户列表，再逐 app 作用域探测。
+  // 两条入口都走同一个 openDetail ⇒ 同一份「带作用域的 detail 请求」。
   useEffect(() => {
     const key = searchParams.get('key');
     if (!key) return;
     if (DATA_MODE === 'api' && !session) return;
     const qTenant = searchParams.get('tenant') ?? searchParams.get('tenant_id') ?? '';
     const qApp = searchParams.get('app') ?? searchParams.get('app_id') ?? '';
+    const qService = searchParams.get('service') ?? searchParams.get('service_name') ?? '';
 
     if (DATA_MODE !== 'api') {
       void openDetail(key);
@@ -238,26 +287,29 @@ export default function SecretsPage() {
     if (isPlatformSession) {
       if (qTenant) setTenant(qTenant);
       if (qApp) setAppId(qApp);
-      if (qTenant || qApp) {
-        void openDetail(key, { tenant_id: qTenant, app_id: qApp });
-        return;
-      }
+      const hinted: DetailRow | undefined =
+        qTenant || qApp || qService ? { tenant_id: qTenant, app_id: qApp, service_name: qService } : undefined;
       let cancelled = false;
       setDetailLoading(true);
       void (async () => {
         try {
-          const res = await listAllSecrets({ prefix: key, page: 1, page_size: 20 });
-          const row = res.items.find((item) => item.key === key);
+          // 先按 /all 命中「行」，再交给 openDetail：行里带 service_name，provision 行才定位得到
+          const res = await listAllSecrets({
+            tenant_id: qTenant || undefined,
+            app_id: qApp || undefined,
+            prefix: key,
+            page: 1,
+            page_size: 20,
+          }).catch(() => null);
+          const row = res?.items.find((item) => item.key === key) ?? null;
           if (cancelled) return;
           if (row) {
             setTenant(row.tenant_id || PLATFORM_TENANT_ID);
             setAppId(row.app_id || '');
             await openDetail(key, row);
-          } else {
-            await openDetail(key);
+            return;
           }
-        } catch {
-          if (!cancelled) await openDetail(key);
+          await openDetail(key, hinted);
         } finally {
           if (!cancelled) setDetailLoading(false);
         }
@@ -272,9 +324,9 @@ export default function SecretsPage() {
       void openDetail(key);
       return;
     }
-    if (qApp) {
-      setAppId(qApp);
-      void openDetail(key, { tenant_id: tenantId, app_id: qApp });
+    if (qApp || qService) {
+      if (qApp) setAppId(qApp);
+      void openDetail(key, { tenant_id: tenantId, app_id: qApp, service_name: qService });
       return;
     }
     let cancelled = false;
@@ -282,27 +334,24 @@ export default function SecretsPage() {
     void (async () => {
       try {
         const res = await listSecrets({ prefix: key, page: 1, page_size: 20 }, { tenantId });
-        const row = res.items.find((item) => item.key === key);
         if (cancelled) return;
+        const row = res.items.find((item) => item.key === key) ?? null;
         if (row) {
           setAppId(row.app_id || '');
           await openDetail(key, row);
           return;
         }
+        // 逐 app 作用域探测（每一轮都走同一个 openDetail；未命中静默，最后统一提示）
         const apps = await listAppScopes().catch(() => []);
         for (const app of apps) {
-          try {
-            const d = await getSecretDetail(key, { tenantId, appId: app.app_id || undefined });
-            if (cancelled) return;
+          const hit = await openDetail(key, { tenant_id: tenantId, app_id: app.app_id }, { quietMiss: true });
+          if (cancelled) return;
+          if (hit) {
             setAppId(app.app_id || '');
-            setDetail(d);
             return;
-          } catch {
-            /* 尝试下一个 app 作用域 */
           }
         }
-        if (!cancelled) await openDetail(key, { tenant_id: tenantId });
-      } catch {
+        // 都没命中：按本租户全局行再试一次 ⇒ 会给出「该作用域下不存在此密钥」的可点提示
         if (!cancelled) await openDetail(key, { tenant_id: tenantId });
       } finally {
         if (!cancelled) setDetailLoading(false);
@@ -388,6 +437,32 @@ export default function SecretsPage() {
       setSubmitting(false);
     }
   };
+
+  const clearDeepLink = useCallback(() => {
+    if (!searchParams.has('key')) return;
+    // 清掉 ?key=：避免刷新 / 重渲染后按同一（失败）作用域再次打开详情
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const closeDetail = useCallback(() => {
+    setDetail(null);
+    setDetailMiss(null);
+    setRevealed(null);
+    setRevealError('');
+    clearDeepLink();
+  }, [clearDeepLink]);
+
+  /**
+   * 「切换作用域」：收起详情 + 清空应用作用域筛选（回到该租户下全部应用），并清掉深链。
+   * 不在标题/搜索框之间造隐式状态（列表搜索框非受控），所以不改 prefix。
+   */
+  const switchDetailScope = useCallback(() => {
+    setDetail(null);
+    setDetailMiss(null);
+    setAppId('');
+    setPage(1);
+    clearDeepLink();
+  }, [clearDeepLink]);
 
   const revealVersion = async (row: SecretDetail, version: number, reason: string) => {
     setRevealError('');
@@ -599,14 +674,10 @@ export default function SecretsPage() {
       </PageSection>
 
       <Drawer
-        open={!!detail}
-        onClose={() => {
-          setDetail(null);
-          setRevealed(null);
-          setRevealError('');
-        }}
+        open={!!detail || !!detailMiss}
+        onClose={closeDetail}
         size="lg"
-        title={detail?.key}
+        title={detail?.key ?? detailMiss?.key}
         loading={detailLoading}
         extra={
           detail && !readOnly ? (
@@ -627,6 +698,27 @@ export default function SecretsPage() {
           ) : null
         }
       >
+        {detailMiss ? (
+          <div className="space-y-3 text-sm">
+            <Alert
+              type="warning"
+              showIcon
+              title={t('secrets.detailMissTitle')}
+              description={t('secrets.detailMissDescription', {
+                tenant: detailMiss.tenantId || '—',
+                app: detailMiss.appId || t('secrets.globalRow'),
+                service: detailMiss.serviceName || t('secrets.globalRow'),
+              })}
+            />
+            <code className="break-all font-mono text-xs">{detailMiss.key}</code>
+            <Space wrap>
+              <Button onClick={switchDetailScope}>{t('secrets.detailMissSwitchScope')}</Button>
+              <Button type="primary" onClick={closeDetail}>
+                {t('secrets.detailMissBack')}
+              </Button>
+            </Space>
+          </div>
+        ) : null}
         {detail ? (
           <div className="space-y-4 text-sm">
             <div className="grid grid-cols-2 gap-3">

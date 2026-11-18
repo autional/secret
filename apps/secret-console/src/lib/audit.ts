@@ -63,3 +63,37 @@ export function auditStatusKind(status?: number | null): AuditStatusKind {
 export function isAuditSuccess(status?: number | null): boolean {
   return auditStatusKind(status) === 'success';
 }
+
+/**
+ * 「结果」列的展示单元（唯一真源，勿在视图里另写一套）。
+ *
+ * 三态映射：
+ * - `success` → i18n `audit.success`
+ * - `failure` → i18n `audit.fail`
+ * - `raw`     → **原样展示状态码数字**（不猜语义）
+ *
+ * 为什么单独抽成纯函数：线上样本只有 200/400/401，第 3 分支（原样显示）
+ * 长期没有回归覆盖；判定留在 JSX 里就无法被 vitest 覆盖，故提到 `lib/`。
+ */
+export type AuditResultDisplay = { kind: 'label'; labelKey: 'audit.success' | 'audit.fail' } | { kind: 'raw'; text: string };
+
+export function auditResultDisplay(status?: number | null): AuditResultDisplay {
+  const kind = auditStatusKind(status);
+  if (kind === 'raw') return { kind: 'raw', text: String(status) };
+  return { kind: 'label', labelKey: kind === 'success' ? 'audit.success' : 'audit.fail' };
+}
+
+/** 非真实用户的操作者标记（后端系统事件写 `operator_id = 'system'`）。 */
+export const SYSTEM_OPERATOR_ID = 'system';
+
+/**
+ * 判定某个 `operator_id` 是否「不是真实用户」——即系统事件或空值。
+ *
+ * 为什么需要：审计列表会把系统事件的 `operator_id` 原样带出，旧逻辑把它当真实用户
+ * 去查 `GET /bff/identity/api/v1/admin/users/system`，每页产生一条必然 404。
+ * 这类行没有用户档案可解析，视图直接显示本地化的「系统」，**不发请求**。
+ */
+export function isSystemOperator(operatorId?: string | null): boolean {
+  const value = String(operatorId ?? '').trim().toLowerCase();
+  return value === '' || value === SYSTEM_OPERATOR_ID;
+}

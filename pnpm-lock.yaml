@@ -23,8 +23,8 @@ importers:
   apps/secret-console:
     dependencies:
       '@autional/shared':
-        specifier: 0.1.0-rc.70
-        version: 0.1.0-rc.70(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))
+        specifier: 0.1.0-rc.71
+        version: 0.1.0-rc.71(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))
       '@autional/tailwind-preset':
         specifier: 0.1.0-rc.10
         version: 0.1.0-rc.10(tailwindcss@3.4.19)
@@ -146,8 +146,8 @@ packages:
       react: 19.2.5
       react-dom: 19.2.5
 
-  '@autional/shared@0.1.0-rc.70':
-    resolution: {integrity: sha512-qUqbs1R/Z2rTj+bEAkoV2xqC0EqDKsJKZiQzPGpEOLibdBM/1DxK/RV8iViSo48hHEot6d+n9HjZP4tqFUnaRQ==}
+  '@autional/shared@0.1.0-rc.71':
+    resolution: {integrity: sha512-fM0+zyhX72Hke1wSjEICo8HWZdGV22KIfBhHw83a2NehrUVxsLBbxqlHsHuM+IDWhEd9U+9s8J929jmDeNaKuA==}
     hasBin: true
     peerDependencies:
       react: 19.2.5
@@ -2561,7 +2561,7 @@ snapshots:
       react-dom: 19.2.5(react@19.2.5)
       throttle-debounce: 5.0.2
 
-  '@autional/shared@0.1.0-rc.70(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))':
+  '@autional/shared@0.1.0-rc.71(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.7.0(react@19.2.5))':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@tanstack/react-query': 5.100.9(react@19.2.5)

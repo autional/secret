@@ -17,7 +17,7 @@
     "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
-    "@autional/shared": "0.1.0-rc.70",
+    "@autional/shared": "0.1.0-rc.71",
     "@autional/tailwind-preset": "0.1.0-rc.10",
     "@autional/tokens": "0.1.0-rc.18",
     "@autional/ui": "0.1.0-rc.59",

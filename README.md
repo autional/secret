@@ -33,6 +33,11 @@ PKCE `S256` + `state` + `nonce`；不使用 `client_secret`；剩余 < 5 分钟�
     metadata 键清空（P0 数据丢失修复，2026-11）；
   - 策略保存同样先填原因再 PUT `/policy`。
 - 角色：`super_admin` / `admin` 可读写；`security_admin` 只读（读 `secret:read`、写 403）。令牌未带 roles 时按钮不隐藏，由服务端兜底。
+- **未登录自动启动登录（免点击，2026-11）**：`needsLogin` 且会话已就绪时自动跳授权端点，同一份文档只跳一次
+  （StrictMode 双挂载不重复）；跳转前把时间戳写入 `sessionStorage`（`secret-console:auto-login:v1`），
+  **60 秒内已自动跳 ≥3 次即判定为循环，停止自动跳并回落登录页**（只 `console.warn` 一次，手动按钮仍可登录）。
+  上一次登录出错（`error` 非空）时同样不再自动跳，先让用户看到错误。判定逻辑是纯函数
+  `src/lib/auto-login.ts#decideAutoLogin`（有单测），参考 auth 站 `requireauth-loop-guard.ts`。
 
 ## 运行
 

@@ -28,6 +28,7 @@
   "login.oidcAction": "Sign in with an Autional account",
   "login.mockHint": "Demo authentication is active (VITE_AUTH_MODE=mock).",
   "login.oidcHint": "OIDC authorization code + PKCE · {{url}}",
+  "login.autoRedirecting": "Redirecting to sign-in…",
   "overview.title": "Secret Center overview",
   "overview.description": "Platform-wide inventory across every tenant and app; no scope switching.",
   "overview.tenantTitle": "My secrets overview",

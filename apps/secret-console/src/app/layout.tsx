@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router';
-import { Button, Menu, Tag, Tooltip } from 'antd';
+import { Button, Menu, Spin, Tag, Tooltip } from 'antd';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { AppShell, LanguageSwitcher, ThemeToggle, UserMenu } from '@autional/ui';
 import type { UserMenuItemSpec } from '@autional/ui';
 import { API_NAMESPACE, DATA_MODE, PLATFORM_TENANT_ID } from '@/lib/config';
+import { markAutoLoginAttemptedInThisDocument } from '@/lib/auto-login';
 import { useSession } from '@/hooks/use-session';
+import { useAutoLogin } from '@/hooks/use-auto-login';
 import { useSessionActivity } from '@/hooks/use-session-activity';
 import { PortalMenu } from '@/components/portal-menu';
 import { LoginPage } from './login/page';
@@ -21,9 +23,50 @@ export default function Layout() {
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/oauth/callback') {
     return <Navigate to="/" replace />;
   }
-  if (needsLogin) return <LoginPage error={error} onLogin={() => void login()} />;
+  if (needsLogin) return <LoginGate ready={ready} needsLogin={needsLogin} error={error} onLogin={() => void login()} />;
 
   return <Shell session={session} onLogout={logout} />;
+}
+
+/**
+ * 登录闸门：**先自动跳一次**（首次确认无会话时免点击），失败/被循环保护抑制时
+ * 回落原来的登录页（保留手动按钮）。
+ *
+ * 自动跳的判定与限流在 `lib/auto-login` 的纯函数里（含单测），这里只负责渲染：
+ * 正在跳转时显示「正在跳转…」，避免按钮闪一下又消失。
+ */
+function LoginGate({
+  ready,
+  needsLogin,
+  error,
+  onLogin,
+}: {
+  ready: boolean;
+  needsLogin: boolean;
+  error: string;
+  onLogin: () => void;
+}) {
+  const { t } = useTranslation();
+  const autoLoginPending = useAutoLogin({ ready, needsLogin, error, onLogin });
+
+  if (autoLoginPending) {
+    return (
+      <div
+        className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--color-bg-muted)] text-sm text-[var(--color-text-secondary)]"
+        role="status"
+        aria-live="polite"
+      >
+        <Spin />
+        <span>{t('login.autoRedirecting')}</span>
+      </div>
+    );
+  }
+  // 手动点击也打「已发起跳转」标记：否则 error 被清空后判定会重新变「该跳」，双开授权请求。
+  const handleManualLogin = () => {
+    markAutoLoginAttemptedInThisDocument();
+    onLogin();
+  };
+  return <LoginPage error={error} onLogin={handleManualLogin} />;
 }
 
 function Shell({ session, onLogout }: {

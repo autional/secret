@@ -28,6 +28,7 @@
   "login.oidcAction": "使用 Autional 账号登录",
   "login.mockHint": "当前为演示鉴权（VITE_AUTH_MODE=mock）。",
   "login.oidcHint": "OIDC 授权码 + PKCE · {{url}}",
+  "login.autoRedirecting": "正在跳转到登录页…",
   "overview.title": "密钥中心概览",
   "overview.description": "平台级盘点：全租户 / 全应用，无需切换作用域。",
   "overview.tenantTitle": "我的密钥概览",
